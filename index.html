@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pludor World — Prototype</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;background:#071018;color:#fff}
+#game{position:fixed;inset:0}canvas{display:block}
+.hud{position:fixed;inset:0;pointer-events:none}.top{position:absolute;top:16px;left:16px;right:16px;display:flex;gap:12px;align-items:center;pointer-events:auto}
+.brand{background:rgba(5,12,20,.82);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:10px 14px;font-weight:800;letter-spacing:.4px}.brand span{opacity:.55;font-weight:500;margin-left:6px}
+.pill{background:rgba(5,12,20,.78);border:1px solid rgba(255,255,255,.1);border-radius:999px;padding:9px 13px;font-size:13px}.spacer{flex:1}
+.panel{position:absolute;background:rgba(5,12,20,.86);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.12);border-radius:16px;box-shadow:0 16px 50px rgba(0,0,0,.28);pointer-events:auto}
+.left{left:16px;top:84px;width:235px;padding:14px}.right{right:16px;top:84px;width:285px;padding:14px}.bottom{left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:5px;padding:7px}
+h3{margin:0 0 8px;font-size:14px}.muted{color:#8fa2b3;font-size:12px}.stat{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.07);font-size:13px}
+button{border:0;border-radius:10px;background:#173047;color:#fff;padding:9px 11px;cursor:pointer;font-weight:650}button:hover{background:#214766}.active{background:#246b9c}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px}
+.nav{padding:10px 13px;background:transparent}.nav:hover{background:rgba(255,255,255,.08)}
+#toast{position:absolute;left:50%;top:76px;transform:translateX(-50%);padding:10px 16px;background:rgba(6,13,20,.92);border:1px solid rgba(255,255,255,.15);border-radius:999px;opacity:0;transition:.2s;white-space:nowrap}
+#chat{position:absolute;left:16px;bottom:86px;width:330px;max-height:210px;overflow:auto}.msg{padding:7px 0;font-size:12px}.msg b{color:#79d7ff}
+#modal{position:absolute;inset:0;background:rgba(0,0,0,.42);display:none;align-items:center;justify-content:center;pointer-events:auto}
+.modalbox{width:min(440px,calc(100% - 32px));padding:20px}.modalbox h2{margin:0 0 8px}.modalbox p{color:#a8b6c3;font-size:13px;line-height:1.5}.close{float:right}
+@media(max-width:800px){.left{width:200px}.right{width:220px}.bottom{bottom:8px}.nav{padding:8px}.right{display:none}}
+</style>
+</head>
+<body>
+<div id="game"></div>
+<div class="hud">
+  <div class="top">
+    <div class="brand">PLUDOR <span>WORLD</span></div>
+    <div class="pill">◉ <b id="players">2,481</b> online</div>
+    <div class="pill">💰 <b id="wallet">1,250</b> PLD</div>
+    <div class="pill">⭐ <b id="xp">420</b> XP</div>
+    <div class="spacer"></div><button onclick="askAI()">Ask Pludor AI</button>
+  </div>
+  <div class="panel left">
+    <h3>Nova City · Central</h3><div class="muted">Your virtual life layer</div>
+    <div class="stat"><span>Energy</span><b>86%</b></div><div class="stat"><span>Social</span><b>64%</b></div><div class="stat"><span>Work</span><b>Ready</b></div>
+    <h3 style="margin-top:14px">Nearby</h3>
+    <div class="stat"><span>☕ Daily Grind</span><b>42m</b></div><div class="stat"><span>🛍 Nova Market</span><b>75m</b></div><div class="stat"><span>🎮 Arcade</span><b>110m</b></div>
+    <div class="actions"><button onclick="toast('Quest accepted: Deliver the café brief')">Quest</button><button onclick="openGig()">Gigs</button><button onclick="openLand()">Land</button><button onclick="openShop()">Shop</button></div>
+  </div>
+  <div class="panel right">
+    <h3 id="contextTitle">Welcome to Nova City</h3>
+    <div id="context" class="muted">Walk toward a player or business. The world is connected to Pludor's existing social, commerce and work layers.</div>
+    <div id="contextActions" class="actions"><button onclick="openShop()">Browse</button><button onclick="openGig()">Work</button></div>
+  </div>
+  <div id="chat" class="panel" style="padding:12px">
+    <div class="muted">PROXIMITY CHAT</div>
+    <div id="messages"><div class="msg"><b>Maya</b> · Anyone heading to the Market?</div><div class="msg"><b>Jay</b> · I'm hiring a video editor.</div></div>
+  </div>
+  <div class="panel bottom">
+    <button class="nav active" onclick="toast('Explore mode')">Explore</button><button class="nav" onclick="openShop()">Shops</button><button class="nav" onclick="openLand()">Land</button><button class="nav" onclick="toast('Games district coming next')">Games</button><button class="nav" onclick="toast('Social layer connected')">Social</button><button class="nav" onclick="askAI()">AI</button>
+  </div>
+  <div id="toast"></div>
+</div>
+<div id="modal"><div class="panel modalbox"><button class="close" onclick="closeModal()">×</button><h2 id="modalTitle"></h2><p id="modalText"></p><div id="modalActions" class="actions"></div></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.min.js"></script>
+<script>
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x8fc8e8); scene.fog=new THREE.Fog(0x8fc8e8,180,520);
+const camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,.1,1000); camera.position.set(0,16,28);
+const renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidth,innerHeight); renderer.shadowMap.enabled=true; document.getElementById('game').appendChild(renderer.domElement);
+const hemi=new THREE.HemisphereLight(0xffffff,0x557080,2.2); scene.add(hemi);
+const sun=new THREE.DirectionalLight(0xffffff,2.5); sun.position.set(-60,90,40); sun.castShadow=true; scene.add(sun);
+const world=new THREE.Group(); scene.add(world);
+function mat(c){return new THREE.MeshStandardMaterial({color:c,roughness:.82,metalness:.08})}
+function box(x,y,z,sx,sy,sz,c){const m=new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),mat(c));m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;world.add(m);return m}
+function cyl(x,y,z,r,h,c){const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,16),mat(c));m.position.set(x,y,z);m.castShadow=true;world.add(m);return m}
+box(0,-.7,0,260,1,260,0x293b43);
+for(let i=-100;i<=100;i+=25){box(i,.02,0,8,.15,250,0x53636a);box(0,.03,i,250,.15,8,0x53636a)}
+// central plaza
+box(0,.15,0,46,.3,46,0x8a9495); cyl(0,.3,0,7,.35,0x3d8fa8); cyl(0,.5,0,5,.45,0xbfe9f2);
+function building(x,z,w,d,h,c,name){
+  box(x,h/2,z,w,h,d,c); box(x,h+.35,z,w+.2,.7,d+.2,0x202b35);
+  const sign=box(x,h*.62,z-d/2-.05,w*.72,h*.12,.15,0x13202a); sign.userData={name};
+  for(let yy=2;yy<h-1;yy+=3) for(let xx=x-w/2+2;xx<x+w/2-1;xx+=3) box(xx,yy,z-d/2-.12,1.2,1.3,.12,0x91c7d0);
+}
+building(-38,-28,20,18,24,0x526879,'Daily Grind');
+building(35,-28,26,18,34,0x785b73,'Nova Market');
+building(-38,32,22,18,30,0x4c7066,'Arcade');
+building(36,31,25,20,42,0x4b5d86,'Pludor Labs');
+building(0,62,45,18,27,0x6c5d4b,'Creator Hub');
+for(let x=-95;x<=95;x+=16){cyl(x,3,-80,2,6,0x5b765f);cyl(x,7,-80,1.2,3,0x4c9b63)}
+// billboard
+box(0,10,-48,20,10,.7,0x15232c); box(0,10,-48,17,7,.2,0x2f8db0);
+for(let x=-8;x<=8;x+=4)cyl(x,0,-8,1,3,0x6f7d6e);
+const avatar= new THREE.Group(); const body=new THREE.Mesh(new THREE.CapsuleGeometry(1,2.5,6,12),mat(0x39a6df)); body.position.y=2; body.castShadow=true; avatar.add(body); const head=new THREE.Mesh(new THREE.SphereGeometry(1,16,16),mat(0xf0bd8b)); head.position.y=4.2; head.castShadow=true; avatar.add(head); avatar.position.set(0,0,12); world.add(avatar);
+const players=[{name:'Maya',x:8,z:8,c:0xf08b61},{name:'Jay',x:-12,z:2,c:0x8f7ce0},{name:'Ayo',x:15,z:-5,c:0x62c78d}];
+players.forEach(p=>{const g=new THREE.Group();const b=new THREE.Mesh(new THREE.CapsuleGeometry(.8,2,5,10),mat(p.c));b.position.y=1.6;g.add(b);const h=new THREE.Mesh(new THREE.SphereGeometry(.72,12,12),mat(0x9c6a49));h.position.y=3.7;g.add(h);g.position.set(p.x,0,p.z);g.userData=p;world.add(g)});
+const keys={}; addEventListener('keydown',e=>keys[e.key.toLowerCase()]=true); addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+let last=performance.now(), target=null;
+function distance(a,b){return Math.hypot(a.x-b.x,a.z-b.z)}
+function updateContext(){let nearest=null,nd=999;[...players].forEach(p=>{const d=distance(avatar.position,p);if(d<nd){nd=d;nearest=p}}); if(nearest&&nd<8){contextTitle.textContent=nearest.name+' is nearby';context.textContent='Proximity detected. Use Pludor messaging for text or voice without creating a second chat system.';contextActions.innerHTML='<button onclick="talk(\''+nearest.name+'\',\'text\')">Text</button><button onclick="talk(\''+nearest.name+'\',\'voice\')">Voice</button><button onclick="toast(\'Friend request sent\')">Add Friend</button><button onclick="openGig()">View Gigs</button>';return}
+const businesses=[{n:'Daily Grind',x:-38,z:-28,t:'Real store/restaurant surface'},{n:'Nova Market',x:35,z:-28,t:'Products and checkout'},{n:'Arcade',x:-38,z:32,t:'Games and events'},{n:'Pludor Labs',x:36,z:31,t:'AI, tools and creators'}];let nb=null,bd=999;businesses.forEach(b=>{const d=distance(avatar.position,b);if(d<bd){bd=d;nb=b}});if(nb&&bd<18){contextTitle.textContent=nb.n;context.textContent=nb.t+'. In the full Pludor integration this object references the existing business/store/service/game rather than duplicating it.';contextActions.innerHTML='<button onclick="openShop()">Open</button><button onclick="toast(\'Booking/order action\')">Order</button>'; } else {contextTitle.textContent='Welcome to Nova City';context.textContent='Explore, meet people, work gigs, shop, claim land and build. Move with WASD or arrow keys.';contextActions.innerHTML='<button onclick="openShop()">Browse</button><button onclick="openGig()">Work</button>'}}
+function animate(t){const dt=Math.min((t-last)/1000,.05);last=t;let dx=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0),dz=(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0);if(dx||dz){const l=Math.hypot(dx,dz);avatar.position.x+=dx/l*14*dt;avatar.position.z+=dz/l*14*dt}avatar.position.x=Math.max(-115,Math.min(115,avatar.position.x));avatar.position.z=Math.max(-115,Math.min(115,avatar.position.z));camera.position.lerp(new THREE.Vector3(avatar.position.x,15,avatar.position.z+25),.08);camera.lookAt(avatar.position.x,2,avatar.position.z);updateContext();renderer.render(scene,camera);requestAnimationFrame(animate)} requestAnimationFrame(animate);
+function toast(s){const e=document.getElementById('toast');e.textContent=s;e.style.opacity=1;clearTimeout(window.tt);window.tt=setTimeout(()=>e.style.opacity=0,2200)}
+function openModal(t,p,buttons){modalTitle.textContent=t;modalText.textContent=p;modalActions.innerHTML=buttons.map(x=>'<button onclick="'+x[1]+'">'+x[0]+'</button>').join('');modal.style.display='flex'}
+function closeModal(){modal.style.display='none'}
+function openShop(){openModal('Nova Market','A world storefront backed by Pludor commerce. In production this opens the existing catalog, cart, checkout, payment and fulfillment flow.',[['Browse products','toast(\'Catalog opened\')'],['View orders','toast(\'Orders opened\')']])}
+function openGig(){openModal('Pludor Work','UGC becomes one vertical of the broader gig engine. Nearby work can be physical, digital, creator, AI or virtual.',[['Accept editor gig','toast(\'Gig accepted +40 XP\');closeModal()'],['Find local work','toast(\'Work map opened\')']])}
+function openLand(){openModal('Land & Property','Finite parcels give the world persistent ownership and rental. No blockchain is required for the prototype.',[['Rent parcel — 100 PLD','toast(\'Parcel reserved\');closeModal()'],['View owned land','toast(\'Property portfolio opened\')']])}
+function askAI(){openModal('Ask Pludor AI','The AI layer can understand your world context and call existing Pludor actions: shop, book, message, hire, learn, create, advertise and more.',[['Find something to do','toast(\'AI suggested: visit Creator Hub\');closeModal()'],['Find a way to earn','toast(\'AI found 3 nearby gigs\');closeModal()']])}
+function talk(n,type){document.getElementById('messages').innerHTML+='<div class="msg"><b>You</b> · '+(type==='voice'?'Started a voice conversation with ':'Opened chat with ')+n+'</div>';toast(type==='voice'?'Voice connected via Pludor messaging':'Pludor message opened')}
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+</script>
+</body></html>
