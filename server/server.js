@@ -129,6 +129,34 @@ export function createWorldServer({ dataDir = join(ROOT, '.data'), admins = [], 
     return out;
   }
 
+  // One authorised, validated, audited, idempotent contract call.
+  async function execute(user, name, rawArgs, key) {
+    const idk = MUTATING.has(name) && typeof key === 'string' && key.length <= 80 ? `${user.id}|${name}|${key}` : null;
+    if (idk && idem.has(idk)) return { ...idem.get(idk), replay: true };
+    const args = Array.isArray(rawArgs) ? rawArgs.slice(0, 4) : [];
+    let status = 200;
+    let out;
+    try {
+      out = { ok: true, data: await callRpc(user, name, args) };
+    } catch (err) {
+      if (err.code) {
+        status = STATUS[err.code] || 400;
+        out = { ok: false, code: err.code, message: err.message };
+      } else {
+        const id = randomUUID();
+        log({ evt: 'rpc_error', id, name, user: user.id, error: err.message, stack: err.stack?.split('\n').slice(0, 3).join(' | ') });
+        status = 500;
+        out = { ok: false, code: 'internal', message: `Something went wrong (ref ${id.slice(0, 8)}).` };
+      }
+    }
+    if (MUTATING.has(name)) audit.write({ evt: 'rpc', name, user: user.id, status, args: name === 'messaging.send' ? [args[0]] : args });
+    if (idk) {
+      idem.set(idk, { at: Date.now(), status, out });
+      if (idem.size > 5000) for (const [k, v] of idem) if (Date.now() - v.at > 600000) idem.delete(k);
+    }
+    return { status, out };
+  }
+
   async function handleApi(req, res, url) {
     const ip = req.socket.remoteAddress;
     const path = url.pathname;
@@ -158,38 +186,31 @@ export function createWorldServer({ dataDir = join(ROOT, '.data'), admins = [], 
     const m = path.match(/^\/api\/rpc\/([a-z]+\.[a-zA-Z]+)$/);
     if (m) {
       if (req.method !== 'POST') return send(res, 405, { code: 'method', message: 'POST only.' });
-      const name = m[1];
-      if (!RPC.has(name)) return send(res, 404, { code: 'not_found', message: 'Unknown action.' });
-      if (!rate(`rpc:${user.id}`, 40, 20)) return send(res, 429, { code: 'rate_limited', message: 'Slow down a little.' });
-      const key = req.headers['idempotency-key'];
-      const idk = MUTATING.has(name) && typeof key === 'string' && key.length <= 80 ? `${user.id}|${name}|${key}` : null;
-      if (idk && idem.has(idk)) {
-        const hit = idem.get(idk);
-        return send(res, hit.status, hit.body, { 'idempotent-replay': 'true' });
-      }
+      if (!RPC.has(m[1])) return send(res, 404, { code: 'not_found', message: 'Unknown action.' });
+      if (!rate(`rpc:${user.id}`, 120, 40)) return send(res, 429, { code: 'rate_limited', message: 'Slow down a little.' });
       const body = await readJson(req);
-      const args = Array.isArray(body.args) ? body.args.slice(0, 4) : [];
-      let status = 200;
-      let out;
-      try {
-        out = { ok: true, data: await callRpc(user, name, args) };
-      } catch (err) {
-        if (err.code) {
-          status = STATUS[err.code] || 400;
-          out = { ok: false, code: err.code, message: err.message };
-        } else {
-          const id = randomUUID();
-          log({ evt: 'rpc_error', id, name, user: user.id, error: err.message, stack: err.stack?.split('\n').slice(0, 3).join(' | ') });
-          status = 500;
-          out = { ok: false, code: 'internal', message: `Something went wrong (ref ${id.slice(0, 8)}).` };
+      const r = await execute(user, m[1], body.args, req.headers['idempotency-key']);
+      return send(res, r.status, r.out, r.replay ? { 'idempotent-replay': 'true' } : {});
+    }
+    // Batch: the client coalesces calls made in the same tick into one request.
+    if (path === '/api/rpc-batch') {
+      if (req.method !== 'POST') return send(res, 405, { code: 'method', message: 'POST only.' });
+      const body = await readJson(req);
+      const calls = Array.isArray(body.calls) ? body.calls : [];
+      if (!calls.length || calls.length > 25) return send(res, 400, { code: 'bad_request', message: 'Send 1–25 calls.' });
+      const results = [];
+      for (const c of calls) {
+        if (!c || typeof c.name !== 'string' || !RPC.has(c.name)) {
+          results.push({ status: 404, out: { ok: false, code: 'not_found', message: 'Unknown action.' } });
+          continue;
         }
+        if (!rate(`rpc:${user.id}`, 120, 40)) {
+          results.push({ status: 429, out: { ok: false, code: 'rate_limited', message: 'Slow down a little.' } });
+          continue;
+        }
+        results.push(await execute(user, c.name, c.args, c.key));
       }
-      if (MUTATING.has(name)) audit.write({ evt: 'rpc', name, user: user.id, status, args: name === 'messaging.send' ? [args[0]] : args });
-      if (idk) {
-        idem.set(idk, { at: Date.now(), status, body: out });
-        if (idem.size > 5000) for (const [k, v] of idem) if (Date.now() - v.at > 600000) idem.delete(k);
-      }
-      return send(res, status, out);
+      return send(res, 200, { results: results.map((r) => ({ status: r.status, ...r.out })) });
     }
     return send(res, 404, { code: 'not_found', message: 'Not found.' });
   }

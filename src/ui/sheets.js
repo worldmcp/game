@@ -7,6 +7,7 @@ import { PLACES, PARCELS, AGENTS, BILLBOARDS, entrancePoint, PLAZA } from '../co
 import { ECONOMY } from '../config/economy.js';
 import { RESIDENTS, SKILLS } from '../pludor/demo-data.js';
 import { PEOPLE } from '../config/assets.js';
+import { SERVICE_CATEGORIES } from '../pludor/economy-chain.js';
 import { currentStep } from '../core/quests.js';
 import { EV } from '../core/events.js';
 import { KIND_ICON } from './hud.js';
@@ -216,7 +217,7 @@ function gigCard(app, g) {
 }
 
 function catLabel(c) {
-  return { ugc: 'UGC', photography: 'Photography', design: 'Design', 'local-service': 'Local service', delivery: 'Delivery', 'business-services': 'Business services', 'virtual-construction': 'World building', marketing: 'Marketing' }[c] || c;
+  return SERVICE_CATEGORIES[c]?.label || { ugc: 'UGC' }[c] || c;
 }
 
 function personRow(p, extra = '') {
@@ -353,7 +354,9 @@ PLACE_KINDS.business = {
       el.disabled = true;
       const biz = props._biz;
       const items = Object.entries(props.cart || {}).map(([sku, qty]) => ({ sku, qty }));
-      const { order, progress } = await app.api.commerce.checkout({ businessId: biz.id, items, fulfillment: props.fulfillment || biz.fulfillment[0], couponId: props.couponId, attribution: props.attribution });
+      const pp = app.player.position;
+      // The server replaces deliverTo with your home or your real position.
+      const { order, progress } = await app.api.commerce.checkout({ businessId: biz.id, items, fulfillment: props.fulfillment || biz.fulfillment[0], couponId: props.couponId, attribution: props.attribution, deliverTo: { x: pp.x, z: pp.z } });
       props.cart = {};
       props.couponId = null;
       props.step = 'done';
@@ -407,7 +410,8 @@ function renderShop(app, props, biz) {
       ${o.discount ? html`<div><span>Coupon</span><span>−${$m(o.discount)}</span></div>` : ''}${o.fee ? html`<div><span>Delivery</span><span>${$m(o.fee)}</span></div>` : ''}
       <div class="tot"><span>Paid from wallet</span><span>${$m(o.total)}</span></div></div>
       <small class="pw-muted">Order ${o.id} is now in Pludor Orders and with the merchant.</small>
-      <div class="pw-row">${btn('Track order', 'view', { view: 'orders' })}${btn('Keep shopping', 'tab', 'shop', 'ghost')}</div></div>`;
+      ${o.chain ? html`<p class="pw-muted">${o.fulfillment === 'delivery' ? 'Paid into escrow. The merchant prepares it, a courier picks it up and brings it to you — everyone is paid on delivery.' : 'Paid into escrow. Collect it at the shop when it’s ready.'}</p>` : ''}
+      <div class="pw-row">${btn('Track order', 'view', o.chain ? { view: 'track', props: { id: o.id } } : { view: 'orders' })}${btn('Keep shopping', 'tab', 'shop', 'ghost')}</div></div>`;
   }
   const cart = props.cart || {};
   const lines = biz.catalog.filter((c) => cart[c.sku]).map((c) => ({ ...c, qty: cart[c.sku] }));
@@ -460,13 +464,23 @@ function renderAbout(app, props, biz, p) {
 
 // Market District → existing Marketplace / Classifieds.
 PLACE_KINDS.market = {
+  forms: {
+    async sell(app, props, data, s, f) {
+      await app.api.commerce.createListing({ ...data, price: Number(data.price) });
+      f.reset();
+      app.hud.toast('Listed! Buyers will see it at the market', '🏷️');
+      s.render(true);
+    },
+  },
   async render(app, props, s, p) {
     const listings = await app.api.commerce.listListings();
     const bought = new Set((await app.api.commerce.getOrders()).orders.map((o) => o.listingId).filter(Boolean));
     return html`${placeHeader(app, p)}<p class="pw-blurb">Every stall is a live Pludor Marketplace listing. Haggle with sellers in messages, buy with checkout.</p>${eventStrip(app, p.id)}
       <div class="pw-list">${listings.map((l) => html`<div class="pw-item"><div class="pw-item-icon">${l.icon}</div><div class="pw-item-body"><b>${l.title}</b><small>${l.condition} · @${l.seller.handle}</small><span class="pw-price">${$m(l.price)}</span></div>
         <div class="pw-col">${bought.has(l.id) ? html`<span class="pw-tag ok">Bought</span>` : btn('Buy', 'buy', l.id, 'sm')}${btn('Message', 'chat', l.sellerId, 'sm ghost')}</div></div>`)}</div>
-      <div class="pw-row">${btn('Sell something', 'link', { key: 'marketplace.listing', params: { listingId: 'new' } }, 'ghost')}</div>`;
+      <form class="pw-form" data-form="sell"><h4>Sell something</h4><p class="pw-muted">List an item for other players. You get paid when it sells (${Math.round(ECONOMY.fees.marketplace * 100)}% marketplace fee).</p>
+        <div class="pw-grid2"><input name="title" required minlength="3" maxlength="50" placeholder="What are you selling?"><input name="price" type="number" min="1" max="5000" required placeholder="Price"></div>
+        <div class="pw-grid2"><input name="icon" maxlength="2" placeholder="Emoji (optional)"><input name="condition" maxlength="30" placeholder="Condition"></div><button class="pw-btn">List it</button></form>`;
   },
   actions: {
     async buy(app, props, id, s) {
@@ -508,16 +522,21 @@ function workBoard(app, { placeId } = {}) {
 
 function postGigForm(props) {
   const pre = props.prefill || {};
-  return html`<form class="pw-form" data-form="post"><p class="pw-muted">Pay is held in escrow from your wallet and released when you approve the work.</p>
+  const templates = Object.entries(SERVICE_CATEGORIES).flatMap(([cat, def]) => def.examples.slice(0, 1).map((t) => ({ cat, t })));
+  return html`<div class="pw-chips">${templates.map(({ cat, t }) => html`<button class="pw-chip-btn" ${A('template', { category: cat, title: t, onSite: ['home-services', 'delivery', 'local-service'].includes(cat) })}>${t}</button>`)}</div>
+    <form class="pw-form" data-form="post"><p class="pw-muted">Hire another player. Pay is held in escrow and released when you approve (${Math.round(ECONOMY.fees.gigs * 100)}% platform fee).</p>
     <label>Title<input name="title" required minlength="4" maxlength="60" value="${pre.title || ''}" placeholder="e.g. Product photos for my shop"></label>
-    <label>Category<select name="category">${['photography', 'ugc', 'design', 'marketing', 'local-service', 'delivery', 'virtual-construction', 'business-services'].map((c) => html`<option value="${c}" ${pre.category === c ? raw('selected') : ''}>${catLabel(c)}</option>`)}</select></label>
+    <label>Category<select name="category">${Object.keys(SERVICE_CATEGORIES).map((c) => html`<option value="${c}" ${pre.category === c ? raw('selected') : ''}>${catLabel(c)}</option>`)}</select></label>
+    <label class="pw-check"><input type="checkbox" name="onSite" ${pre.onSite ? raw('checked') : ''}> On-site job — the worker must come to where I am now</label>
     <label>Pay (${sym()})<input name="amount" type="number" min="5" max="500" step="1" required value="${pre.amount || 40}"></label>
     <label>Details<textarea name="description" maxlength="400" rows="3" placeholder="What do you need delivered?">${pre.description || ''}</textarea></label>
     <button class="pw-btn">Fund escrow & post</button></form>`;
 }
 
 async function postGigSubmit(app, props, data, s) {
-  const { gig, progress } = await app.api.work.createGig({ ...data, amount: Number(data.amount), placeId: props.prefill?.placeId || null, parcelId: props.prefill?.parcelId || null });
+  const pp = app.player.position;
+  const onSite = data.onSite === 'on';
+  const { gig, progress } = await app.api.work.createGig({ ...data, onSite, location: onSite ? { x: pp.x, z: pp.z } : null, amount: Number(data.amount), placeId: props.prefill?.placeId || null, parcelId: props.prefill?.parcelId || null });
   app.hud.showProgress(progress);
   app.hud.toast(`Posted “${gig.title}” · ${$m(gig.escrow)} in escrow`, '📌');
   await app.refresh();
@@ -712,7 +731,8 @@ VIEWS.gig = {
       s.render();
     },
     async submit(app, props, data, s) {
-      await app.api.work.submit(props.id, data.deliverable);
+      const pp = app.player.position;
+      await app.api.work.submit(props.id, data.deliverable, { x: pp.x, z: pp.z });
       const gig = props._g;
       if (gig.activity) app.api.needs.performActivity(gig.activity).catch(() => {});
       app.hud.toast('Submitted for approval', '📦');
@@ -777,15 +797,18 @@ VIEWS.parcel = {
         ${btn('Ask Nia the realtor', 'view', { view: 'agent', props: { id: 'npc-nia' } }, 'ghost sm')}`;
     }
     if (!p.mine) {
-      return html`${info}<div class="pw-note">Rented by ${p.tenant.displayName}${p.building.businessName ? ` · ${p.building.businessName}` : ''}.</div><div class="pw-row">${btn('💬 Message owner', 'chat', p.tenant.id, 'ghost')}</div>`;
+      return html`${info}<div class="pw-note">Rented by ${p.tenant.displayName}${p.building.businessName ? ` · ${p.building.businessName}` : ''}.</div>
+        <div class="pw-row">${p.building.businessName ? btn(`🛍️ Shop at ${p.building.businessName}`, 'view', { view: 'pbiz', props: { parcelId: p.id } }) : ''}${btn('💬 Message owner', 'chat', p.tenant.id, 'ghost')}</div>`;
     }
     const b = p.building;
     return html`<div class="pw-place-hero" style="--accent:#36d399"><div class="pw-place-icon">${tpls[b.template].icon}</div><div><div class="pw-place-kind">Your ${tpls[b.template].label}</div><div class="pw-place-meta">${b.businessName || 'Not open yet'}</div></div></div>${info}
       ${b.template === 'home'
         ? html`<div class="pw-row">${btn('😴 Sleep', 'activity', { id: 'sleep', placeId: 'home' })}${btn('🚿 Freshen up', 'activity', { id: 'shower', placeId: 'home' }, 'ghost')}</div>`
         : b.businessName
-          ? html`<div class="pw-note good">🏪 ${b.businessName} is open in World.</div>`
-          : html`<form class="pw-form" data-form="open"><h4>Open your business</h4><input name="name" required minlength="2" maxlength="22" placeholder="Business name"><button class="pw-btn">Open for business</button></form>`}
+          ? await storeManager(app, p)
+          : html`<form class="pw-form" data-form="open"><h4>Open your business</h4><input name="name" required minlength="2" maxlength="22" placeholder="Business name">
+            <select name="category"><option value="restaurant">🍽️ Restaurant / food</option><option value="shop" selected>🛍️ Shop</option><option value="service">🧰 Services</option></select>
+            <button class="pw-btn">Open for business</button></form>`}
       <h4>Grow it</h4><div class="pw-grid3">
         <button class="pw-tile" ${A('view', { view: 'post-gig', props: { prefill: { parcelId: p.id, title: 'Build my storefront', category: 'virtual-construction', amount: 40 } } })}><span>🔨</span>Hire a builder</button>
         <button class="pw-tile" ${A('view', { view: 'post-gig', props: { prefill: { parcelId: p.id, title: 'Product photos for my shop', category: 'photography', amount: 45 } } })}><span>📸</span>Hire a photographer</button>
@@ -795,6 +818,15 @@ VIEWS.parcel = {
         <button class="pw-tile" ${A('link', { key: 'live.event', params: { eventId: 'new' } })}><span>🎉</span>Host an event</button></div>`;
   },
   actions: {
+    async rmProduct(app, props, sku, s) {
+      await app.api.business.removeProduct(props.id, sku);
+      s.render(true);
+    },
+    async orderAct(app, props, { id, act }, s) {
+      await app.api.orders[act](id);
+      app.hud.toast({ accept: 'Order accepted — start preparing', reject: 'Order declined and refunded', ready: 'Ready! A courier job is now open' }[act], '🧾');
+      s.render(true);
+    },
     tpl(app, props, id, s) {
       props.template = id;
       s.render(true);
@@ -810,8 +842,14 @@ VIEWS.parcel = {
     },
   },
   forms: {
+    async addProduct(app, props, data, s, f) {
+      await app.api.business.addProduct(props.id, { name: data.name, price: Number(data.price), icon: data.icon || '📦' });
+      f.reset();
+      app.hud.toast('Product added to your storefront', '🆕');
+      s.render(true);
+    },
     async open(app, props, data, s) {
-      const r = await app.api.land.openBusiness(props.id, data.name);
+      const r = await app.api.land.openBusiness(props.id, data.name, data.category);
       app.hud.showProgress(r);
       await app.refresh();
       s.render();
@@ -820,9 +858,15 @@ VIEWS.parcel = {
 };
 
 VIEWS['post-gig'] = {
-  title: 'Post a gig',
+  title: 'Hire someone',
   noAutoRefresh: true,
   render: (app, props) => postGigForm(props),
+  actions: {
+    template(app, props, t, s) {
+      props.prefill = { ...t, amount: 30 };
+      s.render();
+    },
+  },
   forms: { post: postGigSubmit },
 };
 
@@ -1197,11 +1241,20 @@ VIEWS.work = {
     props.tab ||= 'board';
     let body;
     if (props.tab === 'board') body = workBoard(app, { placeId: props.placeId });
+    else if (props.tab === 'deliveries') body = await deliveriesBoard(app);
     else if (props.tab === 'mine') body = await myWork(app);
     else body = postGigForm(props);
-    return html`${tabs(props, [['board', 'Board'], ['mine', 'My work'], ['post', 'Post a gig']])}${body}`;
+    return html`${tabs(props, [['board', 'Gigs'], ['deliveries', '🛵 Deliveries'], ['mine', 'My work'], ['post', 'Hire someone']])}${body}`;
   },
-  actions: { tab: tabAction },
+  actions: {
+    tab: tabAction,
+    template(app, props, t, s) {
+      props.tab = 'post';
+      props.prefill = { ...t, amount: 30 };
+      s.render();
+    },
+    ...deliveryActions(),
+  },
   forms: { post: postGigSubmit },
 };
 
@@ -1324,7 +1377,7 @@ VIEWS.orders = {
   title: 'Orders & bookings',
   async render(app) {
     const o = await app.api.commerce.getOrders();
-    return html`<h4>Orders</h4>${o.orders.length ? html`<div class="pw-list">${o.orders.map((x) => html`<div class="pw-tx"><div><b>${x.businessName}</b><small>${x.lines.map((l) => `${l.qty}× ${l.name}`).join(', ')}</small><span class="pw-status">${x.status}</span></div><b>${$m(x.total)}</b></div>`)}</div>` : empty('No orders yet.')}
+    return html`<h4>Orders</h4>${o.orders.length ? html`<div class="pw-list">${o.orders.map((x) => html`<div class="pw-tx"><div><b>${x.businessName}</b><small>${x.lines.map((l) => `${l.qty}× ${l.name}`).join(', ')}</small><span class="pw-status">${String(x.status).replace(/_/g, ' ')}</span></div><div class="pw-col"><b>${$m(x.total)}</b>${x.chain ? btn('Track', 'view', { view: 'track', props: { id: x.id } }, 'sm ghost') : ''}</div></div>`)}</div>` : empty('No orders yet.')}
       <h4>Bookings</h4>${o.bookings.length ? html`<div class="pw-list">${o.bookings.map((b) => html`<div class="pw-tx"><div><b>${b.businessName}</b><small>${b.serviceName}</small><span class="pw-status">${b.status}</span></div><b>${b.price ? $m(b.price) : 'Free'}</b></div>`)}</div>` : empty('No bookings yet.')}
       ${o.tickets.length ? html`<h4>Tickets</h4><div class="pw-list">${o.tickets.map((t) => html`<div class="pw-tx"><div><b>${t.title}</b></div><b>${$m(t.price)}</b></div>`)}</div>` : ''}
       ${btn('Open Pludor Orders', 'link', { key: 'commerce.orders' }, 'ghost')}`;
@@ -1445,5 +1498,195 @@ VIEWS.inventory = {
       <h4>Tickets</h4>${o.tickets.length ? html`<div class="pw-chips">${o.tickets.map((t) => html`<span class="pw-tag">🎟️ ${t.title}</span>`)}</div>` : empty('No tickets.')}
       <h4>Coupons</h4>${pr.coupons.length ? html`<div class="pw-chips">${pr.coupons.map((c) => html`<span class="pw-tag ok">🏷️ ${c.code} · ${c.percentOff}% off</span>`)}</div>` : empty('No coupons — try the sponsored quests.')}
       <h4>Badges</h4><div class="pw-chips">${pr.achievements.map((a) => html`<span class="pw-tag">${a.icon} ${a.title}</span>`)}</div>`;
+  },
+};
+
+// ───────────────────────── player economy ─────────────────────────
+const STATUS_LABEL = {
+  placed: 'Waiting for the merchant', preparing: 'Being prepared', awaiting_courier: 'Ready — looking for a courier', courier_assigned: 'Courier on the way to the shop',
+  out_for_delivery: 'Out for delivery', delivered: 'Delivered', ready_for_pickup: 'Ready for pickup', collected: 'Collected', rejected: 'Declined (refunded)', cancelled: 'Cancelled (refunded)',
+};
+const TIMELINE = ['placed', 'preparing', 'awaiting_courier', 'courier_assigned', 'out_for_delivery', 'delivered'];
+
+async function storeManager(app, parcel) {
+  const mine = (await app.api.business.mine()).find((b) => b.parcelId === parcel.id);
+  if (!mine) return '';
+  const live = mine.orders.filter((o) => ['placed', 'preparing'].includes(o.status));
+  const fee = Math.round(ECONOMY.fees.commerce * 100);
+  return html`<div class="pw-note good">🏪 ${mine.name} is open · earned ${$m(mine.revenue)} after the ${fee}% platform fee.</div>
+    <h4>Incoming orders (${live.length})</h4>${live.length ? html`<div class="pw-list">${live.map((o) => html`<div class="pw-tx"><div><b>${o.customerName}</b><small>${o.lines.map((l) => `${l.qty}× ${l.name}`).join(', ')} · ${o.fulfillment}</small><span class="pw-status">${STATUS_LABEL[o.status]}</span></div>
+      <div class="pw-col">${o.status === 'placed' ? html`${btn('Accept', 'orderAct', { id: o.id, act: 'accept' }, 'sm')}${btn('Decline', 'orderAct', { id: o.id, act: 'reject' }, 'sm ghost')}` : btn(o.fulfillment === 'delivery' ? 'Ready → courier' : 'Ready', 'orderAct', { id: o.id, act: 'ready' }, 'sm')}</div></div>`)}</div>` : empty('No orders waiting. Share your store or put up a World billboard!')}
+    <h4>Your products (${mine.catalog.length})</h4>${mine.catalog.length ? html`<div class="pw-list">${mine.catalog.map((c) => html`<div class="pw-item"><div class="pw-item-icon">${c.icon}</div><div class="pw-item-body"><b>${c.name}</b><span class="pw-price">${$m(c.price)}</span></div>${btn('Remove', 'rmProduct', c.sku, 'sm ghost')}</div>`)}</div>` : empty('Add your first product so customers can order.')}
+    <form class="pw-form" data-form="addProduct"><div class="pw-grid2"><input name="name" required minlength="2" maxlength="40" placeholder="Product name"><input name="price" type="number" min="1" max="1000" step="0.5" required placeholder="Price"></div>
+      <div class="pw-grid2"><input name="icon" maxlength="2" placeholder="Emoji e.g. 🍔"><button class="pw-btn">Add product</button></div></form>`;
+}
+
+async function deliveriesBoard(app) {
+  const j = await app.api.delivery.jobs();
+  const pp = app.player.position;
+  const d = (pt) => (pt ? Math.round(Math.hypot(pt.x - pp.x, pt.z - pp.z)) : '?');
+  const active = j.mine[0];
+  let activeCard = '';
+  if (active) {
+    const atPickup = active.status === 'courier_assigned';
+    const target = atPickup ? active.pickup : active.dropoff;
+    activeCard = html`<div class="pw-delivery"><b>🛵 Your delivery · ${active.businessName}</b><small>${atPickup ? `Pick up at ${active.businessName}` : `Deliver to ${active.customerName}`} · ${d(target)} m away</small>
+      <ol class="pw-steps-row"><li class="done">Accepted</li><li class="${atPickup ? 'cur' : 'done'}">Pick up</li><li class="${atPickup ? '' : 'cur'}">Deliver</li></ol>
+      <div class="pw-row">${btn('🧭 Navigate', 'go', { x: target.x, z: target.z, label: atPickup ? active.businessName : 'drop-off' })}${btn(atPickup ? '📦 Pick up order' : '✅ Hand over', atPickup ? 'pickup' : 'dropoff', active.id, 'ghost')}</div></div>`;
+  }
+  return html`<p class="pw-muted">Deliver orders from player shops and restaurants. Walk to the shop, pick up, walk to the customer — paid on delivery.</p>${activeCard}
+    <h4>Open jobs (${j.open.length})</h4>${j.open.length ? html`<div class="pw-list">${j.open.map((o) => html`<div class="pw-result"><div><b>${o.businessName} → ${o.customerName}</b><small>${o.lines.length} item(s) · ${d(o.pickup)} m to shop</small></div><div class="pw-row tight"><b class="pw-pay">${$m(o.payout)}</b>${active ? '' : btn('Accept', 'acceptJob', o.id, 'sm')}</div></div>`)}</div>` : empty('No deliveries waiting right now — check back soon.')}
+    ${j.done.length ? html`<h4>Completed</h4><div class="pw-list">${j.done.map((o) => html`<div class="pw-tx"><div><b>${o.businessName}</b><small>to ${o.customerName}</small></div><b class="pos">+${$m(o.courierNet || 0)}</b></div>`)}</div>` : ''}`;
+}
+
+function deliveryActions() {
+  const pos = (app) => ({ x: app.player.position.x, z: app.player.position.z });
+  return {
+    async acceptJob(app, props, id, s) {
+      const o = await app.api.delivery.accept(id);
+      app.hud.toast(`Job accepted — head to ${o.businessName}`, '🛵');
+      app.navigateTo(o.pickup, o.businessName);
+      s.render(true);
+    },
+    async pickup(app, props, id, s) {
+      const o = await app.api.delivery.pickup(id, pos(app));
+      app.hud.toast(`Picked up — deliver to ${o.customerName}`, '📦');
+      app.navigateTo(o.dropoff, 'drop-off');
+      s.render(true);
+    },
+    async dropoff(app, props, id, s) {
+      const o = await app.api.delivery.dropoff(id, pos(app));
+      app.hud.toast(`Delivered! +${$m(o.courierNet)} to your wallet`, '💸');
+      await app.refresh();
+      s.render(true);
+    },
+  };
+}
+
+// Player-owned storefront (restaurants, shops on rented parcels).
+VIEWS.pbiz = {
+  title: 'Shop',
+  async render(app, props) {
+    const biz = await app.api.commerce.getBusiness(`pb_${props.parcelId}`);
+    props._biz = biz;
+    const p = app.state.parcels.find((x) => x.id === props.parcelId);
+    return html`<div class="pw-place-hero" style="--accent:#36d399"><div class="pw-place-icon">${biz.category === 'Restaurant' ? '🍽️' : biz.category === 'Services' ? '🧰' : '🛍️'}</div><div><div class="pw-place-kind">${biz.name}</div><div class="pw-place-meta">${biz.category} · player-owned · by ${biz.owner?.displayName}</div></div></div>
+      <div class="pw-row">${btn('💬 Message owner', 'chat', biz.ownerId, 'ghost sm')}${p ? btn('📍 Go there', 'go', { x: p.x, z: p.z - p.d / 2 - 2, label: biz.name }, 'ghost sm') : ''}</div>
+      ${biz.catalog.length ? renderShop(app, props, biz) : empty('This shop has no products yet.')}`;
+  },
+  actions: PLACE_KINDS.business.actions,
+};
+
+VIEWS.track = {
+  title: 'Track order',
+  async render(app, props) {
+    const o = await app.api.orders.track(props.id);
+    props._o = o;
+    const idx = TIMELINE.indexOf(o.status);
+    const steps = o.fulfillment === 'delivery' ? TIMELINE : ['placed', 'preparing', 'ready_for_pickup', 'collected'];
+    const cur = steps.indexOf(o.status);
+    return html`<div class="pw-gig-hero"><span class="pw-cat">${o.fulfillment}</span><h3>${o.businessName}</h3><small class="pw-muted">${o.lines.map((l) => `${l.qty}× ${l.name}`).join(', ')} · ${$m(o.total)}</small></div>
+      <ol class="pw-timeline">${steps.map((st, i) => html`<li class="${i < cur || o.status === st && ['delivered', 'collected'].includes(st) ? 'done' : i === cur ? 'cur' : ''}">${STATUS_LABEL[st]}</li>`)}</ol>
+      ${['rejected', 'cancelled'].includes(o.status) ? html`<div class="pw-note">${STATUS_LABEL[o.status]}</div>` : ''}
+      ${o.courier ? html`<p>🛵 Courier: <b>${o.courier.displayName}</b></p>` : ''}
+      ${o.fulfillment === 'delivery' ? html`<div class="pw-trackmap"><canvas width="600" height="360"></canvas></div>` : ''}
+      <div class="pw-row">${o.status === 'placed' ? btn('Cancel order', 'cancelOrder', o.id, 'ghost danger sm') : ''}${o.status === 'ready_for_pickup' ? btn('Collect at the shop', 'collect', o.id, 'sm') : ''}${o.status === 'ready_for_pickup' && o.pickup ? btn('Go to shop', 'go', { ...o.pickup, label: o.businessName }, 'ghost sm') : ''}</div>
+      <p class="pw-muted">${idx >= 0 && o.status !== 'delivered' ? 'Updates arrive live.' : ''}</p>`;
+  },
+  mounted(app, props, s, body) {
+    const c = body.querySelector('.pw-trackmap canvas');
+    if (!c) return;
+    const o = props._o;
+    const draw = () => {
+      if (!c.isConnected) return;
+      const g = c.getContext('2d');
+      const xs = [o.pickup?.x, o.dropoff?.x].filter(Number.isFinite);
+      const zs = [o.pickup?.z, o.dropoff?.z].filter(Number.isFinite);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+      const span = Math.max(60, Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) * 1.4;
+      const k = Math.min(c.width, c.height) / span;
+      const X = (x) => c.width / 2 + (x - cx) * k;
+      const Z = (z) => c.height / 2 + (z - cz) * k;
+      g.fillStyle = '#1b2a22';
+      g.fillRect(0, 0, c.width, c.height);
+      g.save();
+      const { half } = app.hud.mapBase;
+      g.translate(X(-half), Z(-half));
+      g.scale((k * half * 2) / c.width, (k * half * 2) / c.width);
+      g.drawImage(app.hud.mapBase.canvas, 0, 0, c.width, c.width);
+      g.restore();
+      g.strokeStyle = '#7c5cff';
+      g.lineWidth = 4;
+      g.setLineDash([10, 8]);
+      g.beginPath();
+      g.moveTo(X(o.pickup.x), Z(o.pickup.z));
+      g.lineTo(X(o.dropoff.x), Z(o.dropoff.z));
+      g.stroke();
+      g.setLineDash([]);
+      const pin = (p, col, label) => {
+        g.fillStyle = col;
+        g.beginPath();
+        g.arc(X(p.x), Z(p.z), 9, 0, Math.PI * 2);
+        g.fill();
+        g.fillStyle = '#fff';
+        g.font = '700 15px Inter, system-ui';
+        g.fillText(label, X(p.x) + 12, Z(p.z) + 5);
+      };
+      pin(o.pickup, '#ff8a5b', o.businessName);
+      pin(o.dropoff, '#36d399', 'You');
+      // Courier: real player's live position, or estimated along the route.
+      let cp = o.courierPos;
+      const peer = o.courierId && app.transport?.getPeer?.(o.courierId);
+      if (peer) cp = { x: peer.x, z: peer.z };
+      if (!cp && o.status === 'out_for_delivery' && o.pickedUpAt) {
+        const t = Math.min(1, (Date.now() - o.pickedUpAt) / (ECONOMY.demo?.botTravelMs || 15000));
+        cp = { x: o.pickup.x + (o.dropoff.x - o.pickup.x) * t, z: o.pickup.z + (o.dropoff.z - o.pickup.z) * t };
+      }
+      if (cp) pin(cp, '#ffd166', '🛵');
+      requestAnimationFrame(draw);
+    };
+    draw();
+  },
+  actions: {
+    async cancelOrder(app, props, id, s) {
+      await app.api.orders.cancel(id);
+      app.hud.toast('Order cancelled and refunded', '↩️');
+      await app.refresh();
+      s.render();
+    },
+    async collect(app, props, id, s) {
+      const pp = app.player.position;
+      await app.api.orders.collect(id, { x: pp.x, z: pp.z });
+      app.hud.toast('Enjoy! Order collected', '🛍️');
+      await app.refresh();
+      s.render();
+    },
+  },
+};
+
+// Every way to earn in Pludor World, in one place.
+VIEWS.earn = {
+  title: 'Earn',
+  root: true,
+  async render(app) {
+    const [jobs, gigs] = await Promise.all([app.api.delivery.jobs(), app.api.work.listGigs()]);
+    const open = gigs.filter((g) => !g.mine && (g.status === undefined || g.status === 'open') && !g.application);
+    const ok = open.filter((g) => g.eligible).length;
+    const myBiz = await app.api.business.mine();
+    const tiles = [
+      ['🛵', 'Deliver orders', `${jobs.open.length} open · from ${$m(ECONOMY.deliveryFee * (1 - ECONOMY.fees.delivery))}`, { view: 'work', props: { tab: 'deliveries' } }],
+      ['💼', 'Gigs & services', `${ok} you qualify for`, { view: 'work', props: { tab: 'board' } }],
+      ['🏪', myBiz.length ? 'Your business' : 'Open a business', myBiz.length ? `${myBiz[0].name} · ${$m(myBiz[0].revenue)} earned` : 'Rent a lot, sell to players', { view: 'land' }],
+      ['🏷️', 'Sell on the market', 'List items for other players', { view: 'place', props: { id: 'nova-market' } }],
+      ['🎓', 'Learn & qualify', 'Courses unlock better-paid gigs', { view: 'learn' }],
+      ['💸', 'Affiliate', 'Earn commission promoting shops', { view: 'place', props: { id: 'kicks-co' } }],
+      ['🎬', 'Create content', 'UGC gigs + AI Studio', { view: 'place', props: { id: 'creator-hub' } }],
+      ['🎉', 'Host events', 'Sell tickets at your venue', { view: 'events' }],
+    ];
+    return html`<p class="pw-muted">Everything here pays real money into your Pludor Wallet. XP is a bonus on top.</p>
+      <div class="pw-earn">${tiles.map(([ic, t, sub, v]) => html`<button class="pw-earn-tile" ${A('view', v)}><span>${ic}</span><b>${t}</b><small>${sub}</small></button>`)}</div>
+      <h4>Need something done?</h4><p class="pw-muted">Hire players for real tasks — mow a lawn, clean a house, write ad copy, deliver a package.</p>
+      ${btn('Hire someone', 'view', { view: 'work', props: { tab: 'post' } })}`;
   },
 };

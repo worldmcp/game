@@ -70,7 +70,7 @@ export class Hud {
     <nav class="pw-dock">
       <button data-sheet="map"><span>🧭</span>Explore</button>
       ${f.WORLD_COMMERCE_ENABLED ? '<button data-sheet="shops"><span>🛍️</span>Shops</button>' : ''}
-      ${f.WORLD_GIGS_ENABLED ? '<button data-sheet="work"><span>💼</span>Work</button>' : ''}
+      ${f.WORLD_GIGS_ENABLED ? '<button data-sheet="earn"><span>💰</span>Earn</button>' : ''}
       ${f.WORLD_LAND_ENABLED ? '<button data-sheet="land"><span>🏗️</span>Land</button>' : ''}
       ${f.WORLD_GAMES_ENABLED ? '<button data-sheet="games"><span>🎮</span>Games</button>' : ''}
       <button data-sheet="social"><span>💬</span>Social</button>

@@ -131,34 +131,52 @@ export class HttpPludorAdapter {
     return data;
   }
 
-  // Mutating calls carry an idempotency key; one automatic retry on network
-  // failure reuses it so a flaky connection can never double-charge.
-  async _rpc(name, args) {
-    const key = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-    const doFetch = async () => {
+  // Calls made in the same tick are coalesced into one /rpc-batch request.
+  // Every call carries an idempotency key; one automatic retry on network
+  // failure reuses it, so a flaky connection can never double-charge.
+  _rpc(name, args) {
+    return new Promise((resolve, reject) => {
+      const key = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+      (this._queue ||= []).push({ name, args, key, resolve, reject });
+      if (!this._flushT) this._flushT = setTimeout(() => this._flushBatch(), 0);
+    });
+  }
+
+  async _flushBatch() {
+    const batch = this._queue.splice(0, 25);
+    this._flushT = this._queue.length ? setTimeout(() => this._flushBatch(), 0) : null;
+    const send = async () => {
       const token = await this.getToken?.();
-      return this.fetch(`${this.apiBase}/rpc/${name}`, {
+      return this.fetch(`${this.apiBase}/rpc-batch`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'idempotency-key': key, ...(token ? { authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ args }),
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ calls: batch.map(({ name, args, key }) => ({ name, args, key })) }),
       });
     };
     let res;
     try {
-      res = await doFetch();
+      res = await send();
     } catch {
       await new Promise((r) => setTimeout(r, 600));
       try {
-        res = await doFetch();
+        res = await send();
       } catch {
-        throw new PludorError('offline', 'Connection lost — check your network and try again.');
+        for (const c of batch) c.reject(new PludorError('offline', 'Connection lost — check your network and try again.'));
+        return;
       }
     }
     const body = await res.json().catch(() => null);
     if (res.status === 401) this.onUnauthorized?.();
-    if (!res.ok || !body?.ok) throw new PludorError(body?.code || `http_${res.status}`, body?.message || `Request failed (${res.status}).`);
-    // Progress, links and notifications arrive as server-pushed events.
-    return body.data;
+    if (!res.ok || !Array.isArray(body?.results)) {
+      for (const c of batch) c.reject(new PludorError(body?.code || `http_${res.status}`, body?.message || `Request failed (${res.status}).`));
+      return;
+    }
+    batch.forEach((c, i) => {
+      const r = body.results[i];
+      // Progress, links and notifications arrive as server-pushed events.
+      if (r?.ok) c.resolve(r.data);
+      else c.reject(new PludorError(r?.code || 'error', r?.message || 'Request failed.'));
+    });
   }
 
   _after(name, data) {

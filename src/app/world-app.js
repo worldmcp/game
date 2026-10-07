@@ -507,7 +507,8 @@ export class WorldApp {
         this.hud.toast(`@${this.personHandle(evt.from)} added you as a friend`, '🤝');
         break;
       case 'order':
-        this.hud.notify({ icon: '📦', title: evt.businessName, body: `Order ${evt.status}`, action: () => this.sheets.open('orders') });
+        this.hud.notify({ icon: '📦', title: evt.businessName, body: `Order ${String(evt.status).replace(/_/g, ' ')}`, action: () => this.sheets.open(evt.orderId ? 'track' : 'orders', evt.orderId ? { id: evt.orderId } : {}) });
+        if (this.sheets.top?.view === 'track') this.sheets.refresh();
         break;
       case 'work': {
         const msg = { assigned: `You're hired for “${evt.title}”. Do the work, then submit.`, completed: `Payment released: “${evt.title}”`, applicant: `${evt.requester} applied to “${evt.title}”`, submitted: `${evt.requester} delivered “${evt.title}” — review it` }[evt.status];
@@ -515,6 +516,13 @@ export class WorldApp {
         this._refreshSoon();
         break;
       }
+      case 'merchant-order':
+        this.hud.notify({ icon: '🧾', title: evt.businessName, body: evt.status === 'placed' ? 'New order — accept it in your store' : evt.status === 'sold' ? 'Your listing sold!' : `Order ${String(evt.status).replace(/_/g, ' ')}`, action: () => this.sheets.open('land') });
+        this._refreshSoon();
+        break;
+      case 'delivery':
+        this.hud.notify({ icon: '🛵', title: 'Delivery', body: `${evt.businessName}: ${String(evt.status).replace(/_/g, ' ')}`, action: () => this.sheets.open('work', { tab: 'deliveries' }) });
+        break;
       case 'link':
         this.hud.showLink(evt.route);
         break;

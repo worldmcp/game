@@ -189,7 +189,7 @@ test('gig loop across two real users with escrow', async () => {
 });
 
 test('rate limiting kicks in', async () => {
-  const results = await Promise.all(Array.from({ length: 80 }, () => rpc(B.token, 'wallet.getWallet')));
+  const results = await Promise.all(Array.from({ length: 200 }, () => rpc(B.token, 'wallet.getWallet')));
   assert.ok(results.some((r) => r.status === 429));
 });
 
@@ -317,4 +317,23 @@ test('player marketplace listing: seller paid minus fee, cannot buy own', async 
   assert.equal((await rpc(A.token, 'commerce.buyListing', [l.id])).status, 200);
   assert.equal((await rpc(B.token, 'wallet.getWallet')).body.data.balance, sBal + 47.5);
   assert.equal((await rpc(A.token, 'commerce.buyListing', [l.id])).status, 409, 'cannot be sold twice');
+});
+
+test('batched calls: one request, per-call results, idempotent writes', async () => {
+  const res = await api('/api/rpc-batch', { token: A.token, body: { calls: [
+    { name: 'wallet.getWallet', args: [] },
+    { name: 'nope.nope', args: [] },
+    { name: 'commerce.getBusiness', args: ['missing'] },
+  ] } });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.results[0].ok, true);
+  assert.equal(res.body.results[1].status, 404);
+  assert.equal(res.body.results[2].status, 404);
+  assert.equal((await api('/api/rpc-batch', { token: A.token, body: { calls: [] } })).status, 400);
+  assert.equal((await api('/api/rpc-batch', { body: { calls: [{ name: 'wallet.getWallet' }] } })).status, 401);
+  const before = (await rpc(A.token, 'wallet.getWallet')).body.data.balance;
+  const call = { name: 'commerce.checkout', args: [{ businessId: 'biz_kicks_co', items: [{ sku: 'kc-socks', qty: 1 }], fulfillment: 'pickup' }], key: 'batch-order-1' };
+  await api('/api/rpc-batch', { token: A.token, body: { calls: [call] } });
+  await api('/api/rpc-batch', { token: A.token, body: { calls: [call] } });
+  assert.equal((await rpc(A.token, 'wallet.getWallet')).body.data.balance, before - 14, 'replayed batch call did not double-charge');
 });

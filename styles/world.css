@@ -559,3 +559,24 @@
 .pw-inv-item { display: grid; gap: 2px; padding: 10px; border-radius: 12px; background: rgba(255, 255, 255, 0.05); }
 .pw-inv-item span { font-size: 22px; }
 .pw-inv-item small { color: var(--pw-muted); font-size: 11px; }
+.pw-check { display: flex !important; align-items: center; gap: 8px; color: var(--pw-text) !important; font-size: 13px !important; }
+.pw-check input { width: auto !important; }
+.pw-delivery { display: grid; gap: 6px; padding: 12px; border-radius: 14px; background: linear-gradient(135deg, rgba(255, 209, 102, 0.18), rgba(255, 138, 61, 0.1)); border: 1px solid rgba(255, 209, 102, 0.4); margin: 10px 0; }
+.pw-delivery small { color: #e9dcc0; }
+.pw-steps-row { display: flex; gap: 6px; list-style: none; padding: 0; margin: 4px 0; font-size: 12px; }
+.pw-steps-row li { flex: 1; padding: 5px 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.07); color: var(--pw-muted); text-align: center; }
+.pw-steps-row li.done { background: rgba(52, 211, 153, 0.25); color: #7ef0c4; }
+.pw-steps-row li.cur { background: rgba(124, 92, 255, 0.35); color: #fff; font-weight: 700; }
+.pw-timeline { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 4px; }
+.pw-timeline li { position: relative; padding: 6px 10px 6px 28px; color: var(--pw-muted); font-size: 13px; }
+.pw-timeline li::before { content: ''; position: absolute; left: 8px; top: 10px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.3); }
+.pw-timeline li.done { color: #7ef0c4; }
+.pw-timeline li.done::before { background: #34d399; border-color: #34d399; }
+.pw-timeline li.cur { color: #fff; font-weight: 700; }
+.pw-timeline li.cur::before { border-color: #ffd166; box-shadow: 0 0 8px #ffd166; }
+.pw-trackmap canvas { width: 100%; border-radius: 14px; display: block; }
+.pw-earn { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
+.pw-earn-tile { display: grid; gap: 2px; justify-items: start; text-align: left; padding: 12px; border-radius: 14px; background: rgba(255, 255, 255, 0.05) !important; border: 1px solid var(--pw-line) !important; }
+.pw-earn-tile span { font-size: 22px; }
+.pw-earn-tile small { color: var(--pw-muted); font-size: 11.5px; }
+.pw-earn-tile:hover { background: rgba(255, 255, 255, 0.1) !important; }
