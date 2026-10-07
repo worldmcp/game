@@ -176,10 +176,10 @@ test('6 · virtual goods: points (+money) buy a premium look that other players 
   const b = await bal(artist);
   await ok(artist.token, 'shop.buyVirtual', ['outfit-neon']);
   near(await bal(artist), b - 2, 0.001);
-  await ok(artist.token, 'identity.updateProfile', [{ look: { top: '#ff70a6', cap: '#e63946' } }]);
+  await ok(artist.token, 'identity.updateProfile', [{ look: { top: '#ff70a6', hat: 'cap', hatColor: '#e63946' } }]);
   const me = await ok(artist.token, 'identity.getCurrentUser');
   assert.equal(me.look.top, '#ff70a6', 'owned premium colour kept');
-  assert.equal(me.look.cap, null, 'unowned cap stripped server-side');
+  assert.equal(me.look.hat, null, 'unowned cap stripped server-side');
   artist.ws.send(JSON.stringify({ type: 'state', x: artist.pos.x + 0.3, z: artist.pos.z, ry: 0 }));
   const seen = await waitFor(buyer.ws, (m) => m.type === 'states' && m.players.some((p) => p.id === artist.user.id && p.profile.look?.top === '#ff70a6'), 4000);
   assert.ok(seen, 'other players see the new look');

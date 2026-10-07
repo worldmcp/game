@@ -22,6 +22,7 @@ import { honk, chime } from '../render/audio.js';
 import { buildInterior, interiorKindFor, INTERIOR_Y, drawCinemaFrame } from '../render/interiors.js';
 import { adTexture } from '../render/textures.js';
 import { Sheets } from '../ui/sheets.js';
+import { StudioStage, BACKDROPS } from '../render/studio-stage.js';
 
 const PROX = ECONOMY.proximity;
 const BOT_ANCHORS = {
@@ -203,8 +204,8 @@ export class WorldApp {
     setPerson(this.player, id);
   }
 
-  portrait(personId) {
-    return portraitOf(this.renderer, personId);
+  portrait(personId, look = null) {
+    return portraitOf(this.renderer, personId, look);
   }
 
   personOf(userId) {
@@ -379,13 +380,17 @@ export class WorldApp {
     addEventListener('blur', () => this.keys.clear());
     let drag = null;
     canvas.addEventListener('pointerdown', (e) => {
-      drag = { x: e.clientX, y: e.clientY, yaw: this.cam.yaw, pitch: this.cam.pitch, moved: false, id: e.pointerId };
+      drag = { x: e.clientX, y: e.clientY, yaw: this.cam.yaw, pitch: this.cam.pitch, ry: this.player.rotation.y, moved: false, id: e.pointerId };
     });
     addEventListener('pointermove', (e) => {
       if (!drag || drag.id !== e.pointerId || this.pinch) return;
       const dx = e.clientX - drag.x;
       const dy = e.clientY - drag.y;
       if (Math.hypot(dx, dy) > 6) drag.moved = true;
+      if (drag.moved && this.studio) {
+        this.player.rotation.y = drag.ry + dx * 0.012;
+        return;
+      }
       if (drag.moved) {
         this._dragAt = performance.now();
         this.cam.yaw = drag.yaw - dx * 0.006;
@@ -393,11 +398,15 @@ export class WorldApp {
       }
     });
     addEventListener('pointerup', (e) => {
-      if (drag && drag.id === e.pointerId && !drag.moved && e.target === canvas) this._click(e);
+      if (drag && drag.id === e.pointerId && !drag.moved && e.target === canvas && !this.studio) this._click(e);
       drag = null;
     });
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
+      if (this.studio && this.stage) {
+        this.stage.view.zoom = Math.max(0, Math.min(1, this.stage.view.zoom - Math.sign(e.deltaY) * 0.2));
+        return;
+      }
       this.cam.dist = Math.max(3.5, Math.min(70, this.cam.dist * (1 + Math.sign(e.deltaY) * 0.1)));
     }, { passive: false });
     // Pinch zoom
@@ -406,7 +415,7 @@ export class WorldApp {
       for (const t of e.changedTouches) touches.set(t.identifier, t);
       if (touches.size === 2) {
         const [a, b] = [...touches.values()];
-        this.pinch = { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), dist: this.cam.dist };
+        this.pinch = { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), dist: this.cam.dist, zoom: this.stage?.view.zoom };
       }
     }, { passive: true });
     canvas.addEventListener('touchmove', (e) => {
@@ -414,6 +423,10 @@ export class WorldApp {
       if (this.pinch && touches.size === 2) {
         const [a, b] = [...touches.values()];
         const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        if (this.studio && this.stage) {
+          this.stage.view.zoom = Math.max(0, Math.min(1, (d / this.pinch.d - 1) * 1.5 + (this.pinch.zoom ?? 0)));
+          return;
+        }
         this.cam.dist = Math.max(3.5, Math.min(70, (this.pinch.dist * this.pinch.d) / d));
       }
     }, { passive: true });
@@ -483,7 +496,7 @@ export class WorldApp {
     const p = this.player.position;
     const prof = this.state.profile || {};
     this.transport.publishState({
-      profile: { handle: prof.handle, displayName: prof.displayName, color: prof.color, skin: this.me.skin, presence: prof.presence, roles: prof.roles, bio: prof.bio, avatar: this.player.userData.person, look: this.player.userData.look || null, dating: this.datingOn() },
+      profile: { handle: prof.handle, displayName: prof.displayName, color: prof.color, skin: this.me.skin, presence: prof.presence, roles: prof.roles, bio: prof.bio, avatar: this.studio ? this.studio.person : this.player.userData.person, look: (this.studio ? this.studio.look : this.player.userData.look) || null, dating: this.datingOn() },
       x: +p.x.toFixed(2), z: +p.z.toFixed(2), ry: +this.player.rotation.y.toFixed(2), moving: this.speed > 0.1, emote: this.emote, inside: this.inside?.key || null,
     });
   }
@@ -948,13 +961,45 @@ export class WorldApp {
   startStudio() {
     if (this.studio) return;
     this.cancelNav();
-    this.studio = { person: this.player.userData.person, look: this.player.userData.look || null, cam: { yaw: this.cam.yaw, pitch: this.cam.pitch, dist: this.cam.dist } };
+    if (this.seated) this.stand();
+    if (this.driving) this.stopDriving();
+    this.studio = { person: this.player.userData.person, look: this.player.userData.look || null, pose: null };
     this.studioSaved = false;
-    // Face the camera: camera sits in front of the player.
-    this.cam.yaw = this.player.rotation.y;
-    this.cam.pitch = 0.1;
-    this.cam.dist = 2.7;
-    this.cam.curDist = undefined;
+    this.stage ||= new StudioStage(this.renderer);
+    let theme = 'aurora';
+    try {
+      theme = localStorage.getItem('pw-studio-bg') || theme;
+    } catch {
+      /* storage blocked */
+    }
+    this.stage.setTheme(theme);
+    this.stage.view.zoom = 0;
+    this.stage.attach(this.player);
+    this.root.classList.add('pw-studio');
+    this.hud.studioBar?.(true);
+  }
+
+  studioCmd(cmd, arg) {
+    const st = this.studio;
+    if (!st || !this.stage) return;
+    const av = this.player;
+    if (cmd === 'turn') av.rotation.y += arg * (Math.PI / 4);
+    else if (cmd === 'zoom') this.stage.view.zoom = this.stage.view.zoom > 0.5 ? 0 : 1;
+    else if (cmd === 'pose') {
+      st.pose = st.pose === arg ? null : arg;
+      av.userData.sit = false;
+    } else if (cmd === 'bg') {
+      const keys = Object.keys(BACKDROPS);
+      const next = keys[(keys.indexOf(this.stage.theme) + 1) % keys.length];
+      this.stage.setTheme(next);
+      try {
+        localStorage.setItem('pw-studio-bg', next);
+      } catch {
+        /* storage blocked */
+      }
+      this.hud.toast(`Backdrop: ${BACKDROPS[next].label}`, '🎨', 1200);
+    }
+    this.hud.studioBar?.(true);
   }
 
   previewLook(draft) {
@@ -966,12 +1011,14 @@ export class WorldApp {
     const st = this.studio;
     if (!st) return;
     this.studio = null;
+    this.stage?.detach();
+    this.root.classList.remove('pw-studio');
+    this.hud.studioBar?.(false);
     if (!this.studioSaved) {
       // Discard the preview.
       if (st.person !== this.player.userData.person) setPerson(this.player, st.person);
       applyLook(this.player, st.look, { hi: true });
     }
-    Object.assign(this.cam, st.cam);
     this.cam.curDist = undefined;
     if (this.transport) this._publish();
   }
@@ -1298,7 +1345,12 @@ export class WorldApp {
     if (this.inside) this._interiorFrame(t);
     else this.city.update(t, this.daylight, this._reel);
     if (this.navMarker.visible) this.navMarker.material.opacity = 0.5 + Math.sin(t * 5) * 0.35;
-    this.post.render(this.scene, this.camera);
+    if (this.studio && this.stage?.avatar) {
+      const sheet = this.sheets.el.getBoundingClientRect();
+      const narrow = innerWidth <= 820;
+      const bar = this.root.querySelector(narrow ? '.pw-studio-bar' : '.pw-top')?.getBoundingClientRect();
+      this.stage.render(dt, { top: bar ? bar.bottom + 6 : 70, right: narrow ? 0 : innerWidth - sheet.left + 12, bottom: narrow ? innerHeight - sheet.top : 0 });
+    } else this.post.render(this.scene, this.camera);
     this.hud.frame(t);
   }
 
@@ -1418,6 +1470,12 @@ export class WorldApp {
   }
 
   _movePlayer(dt, t) {
+    if (this.studio) {
+      const pose = this.studio.pose;
+      if (pose === 'spin') this.player.rotation.y += dt * 0.6;
+      animateAvatar(this.player, t, pose === 'walk' ? 1.4 / 6 : pose === 'run' ? 4 / 6 : 0, pose === 'wave' || pose === 'talk' ? pose : null);
+      return;
+    }
     if (this.driving && !this.inside) return this._driveCar(dt, t);
     const pos = this.player.position;
     const { ix, iz, run } = this.studio ? { ix: 0, iz: 0, run: false } : this._input();

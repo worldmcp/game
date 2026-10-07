@@ -226,17 +226,55 @@ test('points buy virtual goods (never money) and gate premium looks', async () =
   const w1 = await adapter.wallet.getWallet();
   assert.ok(w1.points > 100, 'points ride along with XP');
   assert.equal(w1.balance, w0.balance, 'points never touch money');
+  // v1 looks (cap/glasses) migrate to hat/eyes.
   await adapter.identity.updateProfile({ look: { cap: '#e63946', glasses: true } });
   let me = await adapter.identity.getCurrentUser();
-  assert.equal(me.look.cap, null, 'locked cap stripped until owned');
-  assert.equal(me.look.glasses, true);
+  assert.equal(me.look.hat, null, 'locked cap stripped until owned');
+  assert.equal(me.look.eyes, 'glasses', 'glasses are free');
   await adapter.shop.buyVirtual('acc-cap');
   await assert.rejects(adapter.shop.buyVirtual('acc-cap'), /already own/);
   await assert.rejects(adapter.shop.buyVirtual('car-gt'), /more points/);
-  await adapter.identity.updateProfile({ look: { cap: '#e63946' } });
+  await adapter.identity.updateProfile({ look: { hat: 'cap', hatColor: '#e63946' } });
   me = await adapter.identity.getCurrentUser();
-  assert.equal(me.look.cap, '#e63946');
+  assert.equal(me.look.hat, 'cap');
+  assert.equal(me.look.hatColor, '#e63946');
   assert.ok((await adapter.wallet.getWallet()).owned.includes('acc-cap'));
+});
+
+test('avatar studio: garments, styles, try-on bundle checkout with wallet top-up, saved outfits', async () => {
+  const { adapter } = harness();
+  const look = { top: '#e63946', pattern: 'camo', bottom: '#1f2a44', shoes: '#f5f5f5', hairStyle: 'afro', hat: 'crown', eyes: 'shades', chain: true, watch: true, bag: 'crossbody', aura: '#7c5cff', bogus: 1, hatColor: 'red' };
+  await adapter.identity.updateProfile({ look });
+  let me = await adapter.identity.getCurrentUser();
+  assert.deepEqual([me.look.top, me.look.bottom, me.look.shoes, me.look.eyes], ['#e63946', '#1f2a44', '#f5f5f5', 'shades'], 'free pieces kept');
+  assert.deepEqual([me.look.pattern, me.look.hairStyle, me.look.hat, me.look.chain, me.look.watch, me.look.bag, me.look.aura], ['solid', 'natural', null, false, false, null, null], 'premium pieces stripped until owned');
+  assert.equal(me.look.hatColor, null, 'invalid colour rejected');
+  assert.equal('bogus' in me.look, false);
+  const { itemsUsed } = await import('../src/core/look.js');
+  const items = itemsUsed(look);
+  assert.deepEqual(items.sort(), ['acc-crossbody', 'acc-crown', 'acc-watch', 'aura-glow', 'hair-styles', 'jewel-pack', 'pattern-pack'].sort());
+  const w0 = await adapter.wallet.getWallet();
+  await assert.rejects(adapter.shop.buyBundle(items), /more points/, 'not enough points without top-up');
+  assert.equal((await adapter.wallet.getWallet()).owned.length, w0.owned.length, 'all or nothing');
+  const r = await adapter.shop.buyBundle(items, { topUp: true });
+  const pts = items.reduce((n, id) => n + adapter.eco.virtualItems.find((i) => i.id === id).points, 0);
+  const cash = items.reduce((n, id) => n + (adapter.eco.virtualItems.find((i) => i.id === id).money || 0), 0);
+  assert.equal(r.spent.points, w0.points, 'every point used first');
+  assert.equal(r.spent.topUpPoints, pts - w0.points);
+  assert.equal(Math.round(r.spent.money * 100), Math.round((cash + (pts - w0.points) * 0.01) * 100), 'wallet covers item price + missing points');
+  const w1 = await adapter.wallet.getWallet();
+  assert.equal(w1.points, 0);
+  assert.ok(Math.abs(w1.balance - (w0.balance - r.spent.money)) < 0.001);
+  assert.ok((await adapter.economy.treasury()).byType.virtual >= r.spent.money - 0.001, 'platform earns the money part');
+  await adapter.identity.updateProfile({ look });
+  me = await adapter.identity.getCurrentUser();
+  assert.equal(me.look.hat, 'crown');
+  assert.equal(me.look.aura, '#7c5cff');
+  await adapter.identity.updateProfile({ outfits: [{ name: 'Night out<script>', person: 'female_adult_01', look }, { name: 'Casual', look: { top: '#2a9d8f' } }, {}, {}, { name: 'fifth' }] });
+  me = await adapter.identity.getCurrentUser();
+  assert.equal(me.outfits.length, 4, 'max four outfits');
+  assert.equal(me.outfits[0].name, 'Night outscript');
+  assert.equal(me.outfits[0].look.hat, 'crown');
 });
 
 test('hotel booth: accommodation business is branded and takes paid bookings', async () => {

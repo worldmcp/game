@@ -147,13 +147,24 @@ export const ECONOMY = {
 
   // Pludor Points: earned with XP (pointsPerXp), spent — alone or together
   // with Wallet money — on VIRTUAL game assets. Points never convert to money.
-  points: { start: 100, perXp: 0.5 },
+  // cashPerPoint: wallet money can cover missing points on virtual goods
+  // (1 pt = $0.01); that top-up is platform revenue.
+  points: { start: 100, perXp: 0.5, cashPerPoint: 0.01 },
   virtualItems: [
-    { id: 'acc-cap', name: 'Snapback caps', icon: '🧢', kind: 'look', points: 80, money: 0, desc: 'Six colours of cap for your avatar.' },
+    { id: 'acc-cap', name: 'Snapback cap', icon: '🧢', kind: 'look', points: 80, money: 0, desc: 'Classic snapback in every colour.' },
     { id: 'acc-headphones', name: 'Studio headphones', icon: '🎧', kind: 'look', points: 120, money: 0, desc: 'Over-ear cans, always in style.' },
-    { id: 'acc-backpack', name: 'City backpack', icon: '🎒', kind: 'look', points: 150, money: 0, desc: 'Five colourways.' },
-    { id: 'hair-fantasy', name: 'Fantasy hair colours', icon: '💜', kind: 'look', points: 150, money: 0, desc: 'Violet, cyan and pink hair.' },
+    { id: 'acc-backpack', name: 'City backpack', icon: '🎒', kind: 'look', points: 150, money: 0, desc: 'Every colourway.' },
+    { id: 'hair-fantasy', name: 'Fantasy hair colours', icon: '💜', kind: 'look', points: 150, money: 0, desc: 'Violet, cyan, pink and mint hair.' },
     { id: 'outfit-neon', name: 'Neon outfit pack', icon: '🌈', kind: 'look', points: 200, money: 2, desc: 'Neon pink, ice blue and electric violet outfits.' },
+    { id: 'hair-styles', name: 'Hair styles pack', icon: '🌀', kind: 'look', points: 120, money: 0, desc: 'Afro, puffs, top bun and ponytail.' },
+    { id: 'pattern-pack', name: 'Pattern pack', icon: '🪖', kind: 'look', points: 160, money: 1, desc: 'Camo, check, ombré and tie-dye tops.' },
+    { id: 'hat-pack', name: 'Hat pack', icon: '🎩', kind: 'look', points: 140, money: 0, desc: 'Beanie, bucket hat and fedora in every colour.' },
+    { id: 'acc-crown', name: 'Gold crown', icon: '👑', kind: 'look', points: 600, money: 6, desc: 'For the ones running the city.' },
+    { id: 'acc-visor', name: 'Neo visor', icon: '🥽', kind: 'look', points: 260, money: 2, desc: 'Glowing wraparound visor.' },
+    { id: 'jewel-pack', name: 'Gold jewellery', icon: '📿', kind: 'look', points: 220, money: 2, desc: 'Cuban chain and hoop earrings.' },
+    { id: 'acc-watch', name: 'Smart watch', icon: '⌚', kind: 'look', points: 150, money: 0, desc: 'Always on time.' },
+    { id: 'acc-crossbody', name: 'Crossbody bag', icon: '👜', kind: 'look', points: 110, money: 0, desc: 'Hands-free city carry in every colour.' },
+    { id: 'aura-glow', name: 'Aura glow', icon: '✨', kind: 'look', points: 320, money: 3, desc: 'A glowing ring that follows you everywhere.' },
     // Vehicles: something for every budget. speed is m/s while driving.
     { id: 'car-scooter', name: 'Electric Scooter', icon: '🛴', kind: 'car', vehicle: 'scooter', points: 60, money: 0, speed: 8, color: '#ffbe0b', desc: 'Zip around the district. Cheap and cheerful.' },
     { id: 'car-ebike', name: 'E-Bike', icon: '🚲', kind: 'car', vehicle: 'bike', points: 120, money: 0, speed: 9, color: '#2a9d8f', desc: 'Pedal-assist, perfect for couriers.' },

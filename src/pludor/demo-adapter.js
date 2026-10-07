@@ -8,7 +8,7 @@
 
 import { ECONOMY } from '../config/economy.js';
 import { PARCELS, PLACES, TOKENS, UNIT_SEEDS, WORLD } from '../config/nova-city.js';
-import { sanitizeLook, enforceOwnership } from '../core/look.js';
+import { sanitizeLook, enforceOwnership, sanitizeOutfits } from '../core/look.js';
 import { chatAs } from '../core/llm.js';
 import * as D from './demo-data.js';
 import { CLIENT_REPORTABLE_EVENTS, PludorError } from './contract.js';
@@ -489,6 +489,8 @@ export class DemoPludorAdapter {
             st.profile[k] = v;
           }
           if ('look' in patch) st.profile.look = enforceOwnership(sanitizeLook(patch.look), st.owned || []);
+          // Saved outfits: up to 4, each validated and limited to owned items.
+          if ('outfits' in patch) st.profile.outfits = sanitizeOutfits(patch.outfits).map((o) => ({ ...o, look: enforceOwnership(o.look, st.owned || []) }));
           // Self-declared here; production uses Pludor's verified age.
           if ('birthYear' in patch) {
             const y = Math.floor(Number(patch.birthYear));
@@ -1185,6 +1187,35 @@ export class DemoPludorAdapter {
           t.byType.virtual = money((t.byType.virtual || 0) + item.money);
         });
         A._analytics('virtual_purchase', { itemId, points: item.points, money: item.money });
+        A._notify({ kind: 'state' });
+        return res;
+      }),
+      // Try-before-you-buy checkout: every item a look uses, in one go
+      // (all or nothing).
+      buyBundle: T((itemIds = [], { topUp = false } = {}) => {
+        const ids = [...new Set((Array.isArray(itemIds) ? itemIds : []).map(String))].slice(0, 20);
+        const items = ids.map((id) => (A.eco.virtualItems || []).find((i) => i.id === id));
+        if (!items.length || items.some((i) => !i)) throw new PludorError('not_found', 'Item not found.');
+        const res = A._mutate((st) => {
+          const todo = items.filter((i) => !st.owned.includes(i.id));
+          const pts = todo.reduce((n, i) => n + i.points, 0);
+          const cash = money(todo.reduce((n, i) => n + (i.money || 0), 0));
+          // Short on points? With topUp the wallet covers the gap.
+          const missing = Math.max(0, pts - st.points);
+          if (missing && !topUp) throw new PludorError('insufficient_points', `You need ${missing} more points.`);
+          const topUpCash = money(missing * (A.eco.points?.cashPerPoint ?? 0.01));
+          const total = money(cash + topUpCash);
+          if (total > 0) A._debit(st, total, 'virtual', `Pludor Store · ${todo.map((i) => i.name).join(', ')}${missing ? ` (+${missing} pts)` : ''}`);
+          st.points -= pts - missing;
+          for (const i of todo) st.owned.push(i.id);
+          return { items: todo, points: st.points, balance: st.wallet.balance, spent: { points: pts - missing, money: total, topUpPoints: missing } };
+        });
+        if (res.spent.money) A._mutateWorld((w) => {
+          const t = (w.treasury ||= { total: 0, byType: {} });
+          t.total = money(t.total + res.spent.money);
+          t.byType.virtual = money((t.byType.virtual || 0) + res.spent.money);
+        });
+        A._analytics('virtual_purchase', { items: res.items.map((i) => i.id), points: res.spent.points, money: res.spent.money });
         A._notify({ kind: 'state' });
         return res;
       }),

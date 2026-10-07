@@ -55,7 +55,7 @@ const STATIC_DIRS = ['src/', 'vendor/', 'assets/', 'styles/'];
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.glb': 'model/gltf-binary', '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
 const RPC = new Set(Object.entries(CONTRACT).flatMap(([ns, ms]) => ms.map((m) => `${ns}.${m}`)));
 // Economic / state-changing calls: idempotent + audited.
-const MUTATING = new Set(['orders.accept', 'orders.reject', 'orders.ready', 'orders.cancel', 'orders.collect', 'delivery.accept', 'delivery.pickup', 'delivery.dropoff', 'business.addProduct', 'business.removeProduct', 'business.setBrand', 'commerce.createListing', 'commerce.checkout', 'commerce.book', 'commerce.buyListing', 'work.createGig', 'work.apply', 'work.submit', 'work.hire', 'work.approve', 'land.rent', 'land.openBusiness', 'shop.buyVirtual', 'radio.promote', 'ads.bookPlacement', 'rides.request', 'rides.cancel', 'rides.accept', 'rides.pickup', 'rides.dropoff', 'events.buyTicket', 'events.attend', 'business.claim', 'business.feedback', 'games.submitGame', 'world.collectToken', 'learning.completeCourse', 'social.report', 'social.addFriend', 'social.block', 'messaging.send', 'voice.requestCall']);
+const MUTATING = new Set(['orders.accept', 'orders.reject', 'orders.ready', 'orders.cancel', 'orders.collect', 'delivery.accept', 'delivery.pickup', 'delivery.dropoff', 'business.addProduct', 'business.removeProduct', 'business.setBrand', 'commerce.createListing', 'commerce.checkout', 'commerce.book', 'commerce.buyListing', 'work.createGig', 'work.apply', 'work.submit', 'work.hire', 'work.approve', 'land.rent', 'land.openBusiness', 'shop.buyVirtual', 'shop.buyBundle', 'radio.promote', 'ads.bookPlacement', 'rides.request', 'rides.cancel', 'rides.accept', 'rides.pickup', 'rides.dropoff', 'events.buyTicket', 'events.attend', 'business.claim', 'business.feedback', 'games.submitGame', 'world.collectToken', 'learning.completeCourse', 'social.report', 'social.addFriend', 'social.block', 'messaging.send', 'voice.requestCall']);
 const STATUS = { own_gig: 409, not_found: 404, forbidden: 403, insufficient_funds: 402, duplicate: 409, taken: 409, pending: 409, already_claimed: 409, sold: 409, closed: 409, cooldown: 429, too_far: 409, not_live: 409, ticket_required: 402, inactive: 409, limit: 409, not_wired: 501, age_restricted: 403, no_home: 409, no_vehicle: 409, own_business: 409, insufficient_points: 402 };
 
 export function createWorldServer({ dataDir = join(ROOT, '.data'), admins = [], quiet = false } = {}) {
@@ -154,7 +154,7 @@ export function createWorldServer({ dataDir = join(ROOT, '.data'), admins = [], 
       const place = PLACES.find((p) => p.id === args[0]);
       hub.allowTeleport(user.id, place ? entrancePoint(place, 3.5) : { x: 0, z: 9 });
     }
-    if (name === 'identity.updateProfile' || name === 'shop.buyVirtual') hub.refreshProfile(user.id);
+    if (name === 'identity.updateProfile' || name.startsWith('shop.buy')) hub.refreshProfile(user.id);
     return out;
   }
 

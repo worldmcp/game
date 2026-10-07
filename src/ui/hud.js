@@ -172,6 +172,8 @@ export class Hud {
         return app.sheets.open('avatar');
       case 'park':
         return app.stopDriving();
+      case 'studio':
+        return app.studioCmd(arg.cmd, arg.arg);
       default:
     }
   }
@@ -192,7 +194,7 @@ export class Hud {
     this.q('.pw-me-lvl').textContent = `Level ${lvl.level}`;
     this.q('.pw-xpfill b').style.width = `${Math.round(lvl.progress * 100)}%`;
     this.q('.pw-xptext').textContent = `${s.progress.xp.toLocaleString()} XP`;
-    const portrait = this.app.portrait?.(this.app.player.userData.person);
+    const portrait = this.app.portrait?.(this.app.state.profile?.avatar || this.app.player.userData.person, this.app.state.profile?.look || null);
     for (const av of this.root.querySelectorAll('.pw-av.me')) {
       av.style.background = s.profile.color;
       if (portrait) {
@@ -395,6 +397,26 @@ export class Hud {
     if (!this._acts?.length || this.q('.pw-prompt').hidden) return;
     const a = actId ? this._acts.find((x) => x.id === actId) : this._acts[0];
     a?.run();
+  }
+
+  // Avatar Studio toolbar floating over the stage.
+  studioBar(on) {
+    let el = this.q('.pw-studio-bar');
+    if (!on) {
+      el?.remove();
+      return;
+    }
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'pw-studio-bar';
+      this.root.appendChild(el);
+    }
+    const st = this.app.studio || {};
+    const zoomed = (this.app.stage?.view.zoom || 0) > 0.5;
+    const b = (cmd, arg, label, title, on = false) => html`<button class="${on ? 'on' : ''}" data-hud="studio" data-arg='${JSON.stringify({ cmd, arg })}' title="${title}" aria-label="${title}">${label}</button>`;
+    setHTML(el, html`<div class="pw-sb-group">${b('turn', 1, '⟲', 'Turn left')}${b('turn', -1, '⟳', 'Turn right')}${b('zoom', null, zoomed ? '🧍' : '🙂', zoomed ? 'Full body' : 'Close-up')}</div>
+      <div class="pw-sb-group">${b('pose', 'walk', '🚶', 'Walk', st.pose === 'walk')}${b('pose', 'wave', '👋', 'Wave', st.pose === 'wave')}${b('pose', 'talk', '💬', 'Talk', st.pose === 'talk')}${b('pose', 'spin', '🔄', 'Spin', st.pose === 'spin')}</div>
+      <div class="pw-sb-group">${b('bg', null, '🎨', 'Change backdrop')}</div>`.s);
   }
 
   setDriving(item) {

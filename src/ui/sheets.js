@@ -9,7 +9,7 @@ import { CITY_BY_COUNTRY } from '../config/locale.js';
 import { RESIDENTS, SKILLS, FACULTIES, NPC_PERSONAS } from '../pludor/demo-data.js';
 import { chatAs } from '../core/llm.js';
 import { PEOPLE } from '../config/assets.js';
-import { LOOK_OPTIONS, DEFAULT_LOOK, sanitizeLook, requiredItem, enforceOwnership } from '../core/look.js';
+import { LOOK_OPTIONS, STYLES, DEFAULT_LOOK, sanitizeLook, requiredItem, enforceOwnership, itemsUsed } from '../core/look.js';
 import { SERVICE_CATEGORIES } from '../pludor/economy-chain.js';
 import { currentStep } from '../core/quests.js';
 import { EV } from '../core/events.js';
@@ -1719,44 +1719,105 @@ VIEWS.profile = {
 
 // SETTINGS ─────────────────────────────────────────────────
 // AVATAR STUDIO ────────────────────────────────────────────
-// Snapchat-style editor: pick a body, then skin tone, hair, outfit colour,
-// height/build and accessories, previewed live on your own character.
-const STUDIO_TABS = [['body', 'Body'], ['skin', 'Skin'], ['hair', 'Hair'], ['outfit', 'Outfit'], ['shape', 'Shape'], ['extras', 'Extras']];
+// Snapchat/Bitmoji-style editor on a lit turntable: body, hair, outfit
+// (top, pattern, bottoms, shoes), hats, eyewear, jewellery, bags and aura.
+// Everything can be tried on; premium pieces show their price and are
+// unlocked together, in one checkout, when the look is saved.
+const STUDIO_TABS = [['body', '🧍 Body'], ['hair', '💇 Hair'], ['outfit', '👕 Outfit'], ['hats', '🧢 Hats'], ['face', '🕶️ Face'], ['extras', '✨ Extras'], ['saved', '💾 Outfits']];
 const ownedItems = (app) => app.state.wallet?.owned || [];
-const swatches = (app, key, list, cur, allowNone = true) => html`<div class="pw-swatches">${allowNone ? html`<button class="pw-swatch none ${!cur ? 'on' : ''}" ${A('set', { key, value: null })} title="Original">∅</button>` : ''}${list.map((c) => {
-  const need = requiredItem(key, c);
-  const locked = need && !ownedItems(app).includes(need);
-  return html`<button class="pw-swatch ${cur === c ? 'on' : ''} ${locked ? 'locked' : ''}" style="--c:${c}" ${locked ? A('unlock', need) : A('set', { key, value: c })} title="${locked ? 'Unlock in the Pludor Store' : c}"></button>`;
+const itemById = (id) => ECONOMY.virtualItems.find((x) => x.id === id);
+const priceLabel = (it) => `${it.points} pts${it.money ? ` + ${sym()}${it.money}` : ''}`;
+const lockOf = (app, key, value) => {
+  const need = requiredItem(key, value);
+  return need && !ownedItems(app).includes(need) ? itemById(need) : null;
+};
+const swatches = (app, key, list, cur, allowNone = true) => html`<div class="pw-swatches">${allowNone ? html`<button class="pw-swatch none ${!cur ? 'on' : ''}" ${A('set', { key, value: null })} title="Original" aria-label="Original colour">∅</button>` : ''}${list.map((c) => {
+  const lock = lockOf(app, key, c);
+  return html`<button class="pw-swatch ${cur === c ? 'on' : ''} ${lock ? 'locked' : ''}" style="--c:${c}" ${A('set', { key, value: c })} title="${lock ? `${lock.name} · ${priceLabel(lock)}` : c}" aria-label="${lock ? `${lock.name}, locked` : c}"></button>`;
 })}</div>`;
+const styleTiles = (app, key, cur) => html`<div class="pw-style-grid">${STYLES[key].map(([value, label, icon]) => {
+  const lock = lockOf(app, key, value);
+  return html`<button class="pw-style ${cur === value ? 'on' : ''}" ${A('set', { key, value })}><span>${icon}</span><b>${label}</b>${lock ? html`<em class="pw-price">🔒 ${priceLabel(lock)}</em>` : ''}</button>`;
+})}</div>`;
+const toggleTile = (app, key, icon, label) => {
+  const lock = lockOf(app, key, true);
+  const on = !!app.sheets.top?.props.draft?.look[key];
+  return html`<button class="pw-style ${on ? 'on' : ''}" ${A('toggle', key)}><span>${icon}</span><b>${label}</b>${lock ? html`<em class="pw-price">🔒 ${priceLabel(lock)}</em>` : ''}</button>`;
+};
+const section = (title, body) => html`<div class="pw-studio-sec"><h4>${title}</h4>${body}</div>`;
+
+// What unlocking costs: points first, wallet money covers any shortfall.
+function unlockQuote(app, items) {
+  const points = items.reduce((n, i) => n + i.points, 0);
+  const cash = items.reduce((n, i) => n + (i.money || 0), 0);
+  const have = app.state.wallet?.points ?? 0;
+  const missing = Math.max(0, points - have);
+  const topUpCash = Math.round(missing * (ECONOMY.points.cashPerPoint ?? 0.01) * 100) / 100;
+  const total = Math.round((cash + topUpCash) * 100) / 100;
+  return { points, cash, missing, usePoints: points - missing, topUpCash, total, canTopUp: (app.state.wallet?.balance ?? 0) >= total };
+}
+
+// Items the draft uses that the player doesn't own yet.
+function tryOnItems(app, look) {
+  const owned = ownedItems(app);
+  return itemsUsed(look).filter((id) => !owned.includes(id)).map(itemById).filter(Boolean);
+}
 
 VIEWS.avatar = {
   title: 'Avatar Studio',
   async render(app, props) {
-    if (!props.draft) props.draft = { person: app.player.userData.person, look: { ...DEFAULT_LOOK, ...(app.player.userData.look || app.state.profile?.look || {}) } };
+    if (!props.draft) props.draft = { person: app.player.userData.person, look: sanitizeLook({ ...DEFAULT_LOOK, ...(app.player.userData.look || app.state.profile?.look || {}) }) };
     app.startStudio?.();
     const d = props.draft;
+    const L = d.look;
     props.tab ||= 'body';
     let body;
     if (props.tab === 'body') {
-      body = html`<div class="pw-looks">${PEOPLE.map((p) => {
+      body = html`${section('Character', html`<div class="pw-looks">${PEOPLE.map((p) => {
         const pic = app.portrait(p.id);
-        return html`<button class="pw-look ${d.person === p.id ? 'on' : ''}" ${A('person', p.id)} title="${p.label}"><span style="${pic ? `background-image:url(${pic})` : ''}"></span><small>${p.label.split(' · ')[1] || p.label}</small></button>`;
-      })}</div>`;
-    } else if (props.tab === 'skin') body = html`<p class="pw-muted">Skin tone</p>${swatches(app, 'skin', LOOK_OPTIONS.skin, d.look.skin)}`;
-    else if (props.tab === 'hair') body = html`<p class="pw-muted">Hair colour</p>${swatches(app, 'hair', LOOK_OPTIONS.hair, d.look.hair)}`;
-    else if (props.tab === 'outfit') body = html`<p class="pw-muted">Outfit colour</p>${swatches(app, 'top', LOOK_OPTIONS.outfit, d.look.top)}`;
-    else if (props.tab === 'shape') {
-      body = html`<label class="pw-mini">Height <b>${Math.round(d.look.height * 100)}%</b><input type="range" min="0.9" max="1.1" step="0.01" value="${d.look.height}" data-change="height"></label>
-        <label class="pw-mini">Build <b>${Math.round(d.look.build * 100)}%</b><input type="range" min="0.88" max="1.15" step="0.01" value="${d.look.build}" data-change="build"></label>`;
+        return html`<button class="pw-look ${d.person === p.id ? 'on' : ''}" ${A('person', p.id)} title="${p.label}"><span style="${pic ? `background-image:url(${pic})` : ''}">${pic ? '' : '⏳'}</span><small>${p.label.split(' · ')[1] || p.label}</small></button>`;
+      })}</div>`)}
+        ${section('Skin tone', swatches(app, 'skin', LOOK_OPTIONS.skin, L.skin))}
+        ${section('Shape', html`<label class="pw-mini">Height <b>${Math.round(L.height * 100)}%</b><input type="range" min="0.9" max="1.1" step="0.01" value="${L.height}" data-change="height"></label>
+        <label class="pw-mini">Build <b>${Math.round(L.build * 100)}%</b><input type="range" min="0.88" max="1.15" step="0.01" value="${L.build}" data-change="build"></label>`)}`;
+    } else if (props.tab === 'hair') {
+      body = html`${section('Style', styleTiles(app, 'hairStyle', L.hairStyle))}${section('Colour', swatches(app, 'hair', LOOK_OPTIONS.hair, L.hair))}`;
+    } else if (props.tab === 'outfit') {
+      body = html`${section('Top', swatches(app, 'top', LOOK_OPTIONS.outfit, L.top))}
+        ${L.top ? section('Pattern', styleTiles(app, 'pattern', L.pattern)) : html`<p class="pw-muted">Pick a top colour to add a pattern.</p>`}
+        ${section('Bottoms', swatches(app, 'bottom', LOOK_OPTIONS.bottom, L.bottom))}
+        ${section('Shoes', swatches(app, 'shoes', LOOK_OPTIONS.shoes, L.shoes))}
+        <div class="pw-note">👟 Want the real thing? Fashion and shoe stores in the city sell real items — ${btn('Shop real fashion', 'view', { view: 'shops', props: {} }, 'sm ghost')}</div>`;
+    } else if (props.tab === 'hats') {
+      body = html`${section('Hat', styleTiles(app, 'hat', L.hat))}${L.hat && L.hat !== 'crown' ? section('Colour', swatches(app, 'hatColor', LOOK_OPTIONS.cap, L.hatColor, false)) : ''}`;
+    } else if (props.tab === 'face') {
+      body = html`${section('Eyewear', styleTiles(app, 'eyes', L.eyes))}${section('Jewellery', html`<div class="pw-style-grid">${toggleTile(app, 'earrings', '💫', 'Hoop earrings')}${toggleTile(app, 'chain', '📿', 'Gold chain')}</div>`)}`;
+    } else if (props.tab === 'extras') {
+      body = html`${section('Gear', html`<div class="pw-style-grid">${toggleTile(app, 'headphones', '🎧', 'Headphones')}${toggleTile(app, 'watch', '⌚', 'Smart watch')}</div>`)}
+        ${section('Bag', styleTiles(app, 'bag', L.bag))}${L.bag ? section('Bag colour', swatches(app, 'bagColor', LOOK_OPTIONS.backpack, L.bagColor, false)) : ''}
+        ${section('Aura', html`${swatches(app, 'aura', LOOK_OPTIONS.aura, L.aura)}<p class="pw-muted">A glowing ring that follows you around the city.</p>`)}`;
     } else {
-      const hp = ownedItems(app).includes('acc-headphones');
-      body = html`<div class="pw-grid2"><button class="pw-tile ${d.look.glasses ? 'on' : ''}" ${A('toggle', 'glasses')}><span>🕶️</span>Glasses</button><button class="pw-tile ${d.look.headphones ? 'on' : ''}" ${hp ? A('toggle', 'headphones') : A('unlock', 'acc-headphones')}><span>🎧</span>Headphones${hp ? '' : ' 🔒'}</button></div>
-        <p class="pw-muted">Cap</p>${swatches(app, 'cap', LOOK_OPTIONS.cap, d.look.cap)}
-        <p class="pw-muted">Backpack</p>${swatches(app, 'backpack', LOOK_OPTIONS.backpack, d.look.backpack)}
-        <p class="pw-muted">🔒 items are virtual goods — unlock them with Points in the Pludor Store.</p>`;
+      const outfits = app.state.profile?.outfits || [];
+      body = html`<p class="pw-muted">Save up to four looks and switch in one tap.</p><div class="pw-outfits">${[0, 1, 2, 3].map((i) => {
+        const o = outfits[i];
+        if (!o) return html`<button class="pw-outfit empty" ${A('saveOutfit', i)}><span>＋</span><b>Save current look</b></button>`;
+        const pic = app.portrait(o.person || d.person, o.look);
+        return html`<div class="pw-outfit"><span class="pw-outfit-pic" style="${pic ? `background-image:url(${pic})` : ''}"></span><b>${o.name}</b>
+          <div class="pw-row tight">${btn('Wear', 'wearOutfit', i, 'sm')}${btn('Update', 'saveOutfit', i, 'sm ghost')}${btn('✕', 'dropOutfit', i, 'sm ghost')}</div></div>`;
+      })}</div>`;
     }
-    return html`<p class="pw-muted">Drag the world to turn your character. Changes preview live.</p>${tabs(props, STUDIO_TABS)}${body}
-      <div class="pw-row">${btn('💾 Save look', 'save', null)}${btn('🎲 Surprise me', 'random', null, 'ghost')}${btn('↺ Reset', 'reset', null, 'ghost')}</div>`;
+    const tryOn = tryOnItems(app, L);
+    const pts = tryOn.reduce((n, i) => n + i.points, 0);
+    const cash = tryOn.reduce((n, i) => n + (i.money || 0), 0);
+    const have = app.state.wallet?.points ?? 0;
+    const q = unlockQuote(app, tryOn);
+    const footer = tryOn.length
+      ? html`<div class="pw-tryon"><div><b>Trying on ${tryOn.length} premium item${tryOn.length > 1 ? 's' : ''}</b><small>${tryOn.map((i) => `${i.icon} ${i.name}`).join(' · ')}</small><small>${pts.toLocaleString()} pts${cash ? ` + ${sym()}${cash.toFixed(2)}` : ''} · you have ${have.toLocaleString()} pts</small></div>
+        ${q.missing ? (q.canTopUp ? btn(`🔓 Unlock · ${sym()}${q.total.toFixed(2)}`, 'save', { topUp: true }) : btn(`Need ${q.missing.toLocaleString()} more pts`, 'save', null, 'ghost')) : btn('🔓 Unlock & save', 'save', null)}
+        ${q.missing && q.canTopUp ? html`<small class="pw-tryon-note">Uses your ${have.toLocaleString()} pts, and ${sym()}${q.topUpCash.toFixed(2)} from your wallet covers the other ${q.missing.toLocaleString()} pts${cash ? ` (plus ${sym()}${cash.toFixed(2)} item price)` : ''}.</small>` : ''}</div>`
+      : '';
+    return html`<p class="pw-muted pw-studio-hint">Drag your character to turn · pinch or scroll to zoom. Try anything on — premium pieces are only charged when you save.</p>${tabs(props, STUDIO_TABS)}<div class="pw-studio-body">${body}</div>
+      ${footer}<div class="pw-row pw-studio-acts">${tryOn.length ? '' : btn('💾 Save look', 'save', null)}${btn('🎲 Surprise me', 'random', null, 'ghost')}${btn('↺ Reset', 'reset', null, 'ghost')}</div>`;
   },
   actions: {
     tab: tabAction,
@@ -1767,15 +1828,10 @@ VIEWS.avatar = {
     },
     set(app, props, { key, value }, s) {
       props.draft.look[key] = value;
+      // Picking a hat/bag style gives it a sensible colour straight away.
+      if (key === 'hat' && value && !props.draft.look.hatColor) props.draft.look.hatColor = LOOK_OPTIONS.cap[1];
+      if (key === 'bag' && value && !props.draft.look.bagColor) props.draft.look.bagColor = LOOK_OPTIONS.backpack[0];
       app.previewLook(props.draft);
-      s.render(true);
-    },
-    async unlock(app, props, id, s) {
-      const it = ECONOMY.virtualItems.find((x) => x.id === id);
-      if (!(await app.hud.confirm(`Unlock ${it.name}?`, `${it.points} points${it.money ? ` + ${sym()}${it.money} from your wallet` : ''}. Virtual item for your avatar.`, 'Unlock'))) return;
-      await app.api.shop.buyVirtual(id);
-      app.hud.toast(`${it.name} unlocked`, it.icon);
-      await app.refreshLight();
       s.render(true);
     },
     toggle(app, props, key, s) {
@@ -1785,25 +1841,66 @@ VIEWS.avatar = {
     },
     random(app, props, _, s) {
       const pick = (a) => a[Math.floor(Math.random() * a.length)];
-      props.draft = {
-        person: pick(PEOPLE).id,
-        look: enforceOwnership({ ...DEFAULT_LOOK, skin: pick(LOOK_OPTIONS.skin), hair: pick(LOOK_OPTIONS.hair), top: pick(LOOK_OPTIONS.outfit), height: 0.95 + Math.random() * 0.1, build: 0.94 + Math.random() * 0.12, glasses: Math.random() < 0.3, headphones: Math.random() < 0.2, cap: Math.random() < 0.3 ? pick(LOOK_OPTIONS.cap) : null, backpack: Math.random() < 0.3 ? pick(LOOK_OPTIONS.backpack) : null }, ownedItems(app)),
+      const pickStyle = (k, pNone = 0) => (Math.random() < pNone ? null : pick(STYLES[k].filter(([v]) => v))[0]);
+      const look = {
+        ...DEFAULT_LOOK, skin: pick(LOOK_OPTIONS.skin), hair: pick(LOOK_OPTIONS.hair), hairStyle: pickStyle('hairStyle'), top: pick(LOOK_OPTIONS.outfit), pattern: Math.random() < 0.5 ? 'solid' : pickStyle('pattern'),
+        bottom: pick(LOOK_OPTIONS.bottom), shoes: pick(LOOK_OPTIONS.shoes), height: 0.95 + Math.random() * 0.1, build: 0.94 + Math.random() * 0.12,
+        hat: pickStyle('hat', 0.55), hatColor: pick(LOOK_OPTIONS.cap), eyes: pickStyle('eyes', 0.6), headphones: Math.random() < 0.15, chain: Math.random() < 0.2, earrings: Math.random() < 0.25, watch: Math.random() < 0.3,
+        bag: pickStyle('bag', 0.6), bagColor: pick(LOOK_OPTIONS.backpack), aura: Math.random() < 0.15 ? pick(LOOK_OPTIONS.aura) : null,
       };
+      props.draft = { person: Math.random() < 0.5 ? props.draft.person : pick(PEOPLE).id, look: sanitizeLook(look) };
       app.previewLook(props.draft);
       s.render(true);
     },
     reset(app, props, _, s) {
-      props.draft.look = { ...DEFAULT_LOOK };
+      props.draft.look = sanitizeLook({ ...DEFAULT_LOOK });
       app.previewLook(props.draft);
       s.render(true);
     },
-    async save(app, props) {
+    async save(app, props, arg, s) {
       const look = sanitizeLook(props.draft.look);
+      const tryOn = tryOnItems(app, look);
+      if (tryOn.length) {
+        const q = unlockQuote(app, tryOn);
+        if (q.missing && !(arg?.topUp && q.canTopUp)) {
+          app.hud.toast(`You need ${q.missing} more points (or ${sym()}${q.total.toFixed(2)} in your wallet). Earn points with gigs, deliveries, courses and exploring — or remove a premium piece.`, '⭐', 4600);
+          return;
+        }
+        const names = tryOn.map((i) => `${i.icon} ${i.name}`).join(', ');
+        const cost = q.missing ? `${q.usePoints.toLocaleString()} points + ${sym()}${q.total.toFixed(2)} from your wallet` : `${q.points.toLocaleString()} points${q.cash ? ` + ${sym()}${q.cash.toFixed(2)} from your wallet` : ''}`;
+        if (!(await app.hud.confirm(`Unlock ${tryOn.length} item${tryOn.length > 1 ? 's' : ''}?`, `${names} — ${cost}. Yours to wear forever.`, 'Unlock & save'))) return;
+        await app.api.shop.buyBundle(tryOn.map((i) => i.id), { topUp: !!q.missing });
+        await app.refreshLight();
+      }
       await app.api.identity.updateProfile({ avatar: props.draft.person, look });
       app.state.profile = { ...app.state.profile, avatar: props.draft.person, look };
       app.studioSaved = true;
-      app.hud.toast('Looking good! Everyone now sees your new look.', '✨');
+      app.hud.toast(tryOn.length ? 'Unlocked and saved — everyone now sees your new look!' : 'Looking good! Everyone now sees your new look.', '✨');
+      app.hud.render();
       app.sheets.close();
+    },
+    async saveOutfit(app, props, i, s) {
+      const outfits = [...(app.state.profile?.outfits || [])];
+      const look = enforceOwnership(sanitizeLook(props.draft.look), ownedItems(app));
+      if (tryOnItems(app, props.draft.look).length) app.hud.toast('Premium pieces you haven’t unlocked were left out of the saved outfit', '🔒', 3200);
+      outfits[i] = { name: outfits[i]?.name || `Outfit ${i + 1}`, person: props.draft.person, look };
+      const prof = await app.api.identity.updateProfile({ outfits: outfits.filter(Boolean) });
+      app.state.profile = { ...app.state.profile, outfits: prof.outfits };
+      app.hud.toast('Outfit saved', '💾');
+      s.render(true);
+    },
+    wearOutfit(app, props, i, s) {
+      const o = app.state.profile?.outfits?.[i];
+      if (!o) return;
+      props.draft = { person: o.person || props.draft.person, look: sanitizeLook(o.look) };
+      app.previewLook(props.draft);
+      s.render(true);
+    },
+    async dropOutfit(app, props, i, s) {
+      const outfits = (app.state.profile?.outfits || []).filter((_, k) => k !== i);
+      const prof = await app.api.identity.updateProfile({ outfits });
+      app.state.profile = { ...app.state.profile, outfits: prof.outfits };
+      s.render(true);
     },
   },
   changes: {
