@@ -12,7 +12,21 @@ export const SKILLS = {
   marketing: { label: 'Marketing', family: 'Marketing' },
   construction: { label: 'Construction', family: 'Construction' },
   sales: { label: 'Sales', family: 'Sales' },
+  finance: { label: 'Bookkeeping & Finance', family: 'Finance' },
+  ai: { label: 'AI Tools', family: 'Technology' },
+  'food-safety': { label: 'Food Safety', family: 'Hospitality' },
+  'home-services': { label: 'Home Services', family: 'Trades' },
+  leadership: { label: 'Leadership', family: 'Business' },
 };
+
+// Pludor University schools. Every course belongs to one.
+export const FACULTIES = [
+  { id: 'business', name: 'School of Business', icon: '📈', color: '#ffd166' },
+  { id: 'creative', name: 'School of Creative Media', icon: '🎬', color: '#b794ff' },
+  { id: 'tech', name: 'School of Technology', icon: '🤖', color: '#4cc9f0' },
+  { id: 'hospitality', name: 'School of Hospitality', icon: '🍽️', color: '#ff8a5b' },
+  { id: 'trades', name: 'School of Trades & Services', icon: '🧰', color: '#7ee8a2' },
+];
 
 export const STARTING_SKILLS = { communication: 1, driving: 1 };
 
@@ -174,7 +188,7 @@ export const GIGS = [
 
 export const COURSES = [
   {
-    id: 'c_video_editing', title: 'Short-form Video Editing', provider: 'ACCA', minutes: 12, grants: { skill: 'video', level: 2 },
+    id: 'c_video_editing', faculty: 'creative', title: 'Short-form Video Editing', provider: 'ACCA', minutes: 12, grants: { skill: 'video', level: 2 },
     lessons: ['Hook in the first 2 seconds', 'Cutting on action', 'Captions & safe zones'],
     challenge: [
       { q: 'Where should the hook of a short-form video land?', options: ['In the first 2 seconds', 'After 10 seconds', 'At the end'], answer: 0 },
@@ -182,7 +196,7 @@ export const COURSES = [
     ],
   },
   {
-    id: 'c_product_photo', title: 'Product Photography Basics', provider: 'Creator Academy', minutes: 8, grants: { skill: 'photography', level: 1 },
+    id: 'c_product_photo', faculty: 'creative', title: 'Product Photography Basics', provider: 'Creator Academy', minutes: 8, grants: { skill: 'photography', level: 1 },
     lessons: ['Light from the side', 'Clean backgrounds', 'Consistent angles'],
     challenge: [
       { q: 'For crisp product shots on white, you want…', options: ['Soft, even light', 'One harsh flash', 'Mixed colour lights'], answer: 0 },
@@ -190,7 +204,7 @@ export const COURSES = [
     ],
   },
   {
-    id: 'c_design_basics', title: 'Design for Billboards', provider: 'ACCA', minutes: 10, grants: { skill: 'design', level: 1 },
+    id: 'c_design_basics', faculty: 'creative', title: 'Design for Billboards', provider: 'ACCA', minutes: 10, grants: { skill: 'design', level: 1 },
     lessons: ['Seven words or fewer', 'High contrast', 'One clear call to action'],
     challenge: [
       { q: 'A billboard headline should be…', options: ['A paragraph', 'Seven words or fewer', 'All in script fonts'], answer: 1 },
@@ -198,10 +212,68 @@ export const COURSES = [
     ],
   },
   {
-    id: 'c_customer_service', title: 'Customer Service Essentials', provider: 'Pludor Academy', minutes: 6, grants: { skill: 'customer-service', level: 2 },
+    id: 'c_customer_service', faculty: 'hospitality', title: 'Customer Service Essentials', provider: 'Pludor University', minutes: 6, grants: { skill: 'customer-service', level: 2 },
     lessons: ['Greet within 10 seconds', 'Listen, then solve', 'Close the loop'],
     challenge: [
       { q: 'First thing when a customer walks in?', options: ['Greet them', 'Wait for them to speak', 'Ignore until they queue'], answer: 0 },
+    ],
+  },
+  {
+    id: 'c_bookkeeping', faculty: 'business', title: 'Bookkeeping for Small Business', provider: 'ACCA', minutes: 15, grants: { skill: 'finance', level: 1 },
+    lessons: ['Separate business and personal money', 'Record every sale and expense', 'Read a simple profit & loss'],
+    challenge: [
+      { q: 'Profit is…', options: ['Revenue minus expenses', 'Total sales', 'Cash in your wallet'], answer: 0 },
+      { q: 'Business and personal spending should be…', options: ['Mixed together', 'Kept separate', 'Only tracked yearly'], answer: 1 },
+    ],
+  },
+  {
+    id: 'c_sales_101', faculty: 'business', title: 'Selling with Confidence', provider: 'Pludor University', minutes: 9, grants: { skill: 'sales', level: 2 },
+    lessons: ['Ask before you pitch', 'Benefits over features', 'Always ask for the sale'],
+    challenge: [
+      { q: 'Before pitching, you should…', options: ['Ask what the customer needs', 'List every feature', 'Offer a discount'], answer: 0 },
+    ],
+  },
+  {
+    id: 'c_ads_first', faculty: 'business', title: 'Your First Ad Campaign', provider: 'Pludor Ads', minutes: 10, grants: { skill: 'marketing', level: 2 },
+    lessons: ['Pick one goal', 'Target where customers already are', 'Measure taps, not just views'],
+    challenge: [
+      { q: 'A good first campaign has…', options: ['One clear goal', 'Five goals', 'No budget'], answer: 0 },
+      { q: 'Which metric shows real interest?', options: ['Impressions only', 'Taps / interactions', 'Billboard size'], answer: 1 },
+    ],
+  },
+  {
+    id: 'c_leadership', faculty: 'business', title: 'Leading a Small Team', provider: 'Pludor University', minutes: 11, grants: { skill: 'leadership', level: 1 },
+    lessons: ['Set clear expectations', 'Give feedback quickly', 'Celebrate wins'],
+    challenge: [
+      { q: 'Feedback works best when it is…', options: ['Saved for once a year', 'Specific and timely', 'Only negative'], answer: 1 },
+    ],
+  },
+  {
+    id: 'c_ai_prompting', faculty: 'tech', title: 'AI Prompting for Creators', provider: 'Pludor AI Studio', minutes: 8, grants: { skill: 'ai', level: 1 },
+    lessons: ['Say who, what and style', 'Give an example', 'Iterate on the output'],
+    challenge: [
+      { q: 'A strong prompt includes…', options: ['Only one word', 'Subject, style and format', 'Random keywords'], answer: 1 },
+    ],
+  },
+  {
+    id: 'c_food_safety', faculty: 'hospitality', title: 'Food Safety & Hygiene', provider: 'Pludor University', minutes: 7, grants: { skill: 'food-safety', level: 1 },
+    lessons: ['Wash hands, every time', 'Keep hot food hot, cold food cold', 'Separate raw and cooked'],
+    challenge: [
+      { q: 'Raw meat and cooked food should be…', options: ['Stored together', 'Kept separate', 'Served on one plate'], answer: 1 },
+    ],
+  },
+  {
+    id: 'c_safe_courier', faculty: 'trades', title: 'Safe Courier Riding', provider: 'Wayfare', minutes: 6, grants: { skill: 'driving', level: 2 },
+    lessons: ['Check your route', 'Stay visible', 'Confirm drop-off with the customer'],
+    challenge: [
+      { q: 'At drop-off you should…', options: ['Leave it anywhere', 'Confirm with the customer', 'Skip the address check'], answer: 1 },
+    ],
+  },
+  {
+    id: 'c_home_services', faculty: 'trades', title: 'Professional Cleaning & Lawn Care', provider: 'Pludor University', minutes: 9, grants: { skill: 'home-services', level: 1 },
+    lessons: ['Quote before you start', 'Top to bottom, dry to wet', 'Photo proof when done'],
+    challenge: [
+      { q: 'When cleaning a room, work…', options: ['Bottom to top', 'Top to bottom', 'Floor first'], answer: 1 },
     ],
   },
 ];
@@ -264,7 +336,7 @@ export const TRIVIA = [
   { q: 'What does Pludor World use for messaging?', options: ['A new chat system', 'Existing Pludor messaging', 'Email'], answer: 1 },
   { q: 'Which district hosts the Kicks & Co store?', options: ['Market Row', 'Riverside Lots', 'Creator Quarter'], answer: 0 },
   { q: 'Game XP can be withdrawn as cash.', options: ['True', 'False'], answer: 1 },
-  { q: 'Where do you take courses?', options: ['Neon Arcade', 'Pludor Academy', 'Wayfare Hub'], answer: 1 },
+  { q: 'Where do you take courses?', options: ['Neon Arcade', 'Pludor University', 'Wayfare Hub'], answer: 1 },
   { q: 'Gig payments are held in…', options: ['Escrow until approval', 'Your XP bar', 'A billboard'], answer: 0 },
   { q: 'Who owns Ember Grill?', options: ['Maya', 'Marcus', 'Theo'], answer: 1 },
 ];

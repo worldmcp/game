@@ -32,6 +32,7 @@ export const CONTRACT = {
   work: ['listGigs', 'getGig', 'apply', 'submit', 'createGig', 'hire', 'approve', 'myWork'],
   learning: ['listCourses', 'getCourse', 'completeCourse', 'getSkills'],
   land: ['listParcels', 'rent', 'openBusiness'],
+  shop: ['listVirtual', 'buyVirtual', 'owned'],
   games: ['startGame', 'submitGame'],
   ads: ['getCreative', 'trackImpression', 'trackInteraction', 'getStats'],
   events: ['listEvents', 'buyTicket', 'attend'],

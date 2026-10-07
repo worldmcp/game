@@ -575,7 +575,15 @@ export function buildInterior(spec) {
       break;
     }
     case 'classroom': {
-      screen(Math.min(6, W * 0.3), 2.4, 0, 2.5, zBack + 0.06, 0, boardTexture('TODAY’S COURSES', (spec.courses || []).map((c) => [c.title, `${c.minutes || 12} min`]), { bg: '#123524', accent: '#7ee8a2' }));
+      screen(Math.min(6, W * 0.3), 2.4, 0, 2.5, zBack + 0.06, 0, boardTexture('PLUDOR UNIVERSITY', (spec.courses || []).slice(0, 6).map((c) => [c.title, `${c.minutes || 12} min`]), { bg: '#123524', accent: '#7ee8a2' }));
+      // One board per school along the side walls, each a doorway to its courses.
+      (spec.faculties || []).forEach((f, k) => {
+        const side = k % 2 ? 1 : -1;
+        const z = zBack + 4 + Math.floor(k / 2) * 5.5;
+        const list = (spec.courses || []).filter((c) => c.faculty === f.id).map((c) => [`${c.done ? '✓ ' : ''}${c.title}`, `${c.minutes || 10}m`]);
+        screen(3.4, 1.9, side * (W / 2 - 0.07), 2.4, z, side < 0 ? Math.PI / 2 : -Math.PI / 2, boardTexture(`${f.icon} ${f.name.replace('School of ', '').toUpperCase()}`, list.length ? list : [['New courses soon', '']], { bg: '#10202a', accent: f.color }));
+        spot(side * (W / 2 - 1.6), z, f.name, `${list.length} course${list.length === 1 ? '' : 's'} · earn credentials`, [{ id: 'enrol', icon: f.icon, label: 'Enrol', action: { type: 'sheet', view: 'learn', props: { faculty: f.id } } }], 1.8);
+      });
       person(-3.2, zBack + 1.6, 0.3, 'female_adult_12');
       const cols = Math.max(2, Math.floor((W - 6) / 3));
       for (let i = 0; i < cols; i++)

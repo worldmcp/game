@@ -9,6 +9,7 @@
 // Messaging/voice payloads only travel through this transport in the demo;
 // in production they go through existing Pludor messaging/voice and this
 // layer carries position/presence only.
+import { sanitizeLook } from '../core/look.js';
 
 const PEER_TIMEOUT_MS = 6000;
 
@@ -44,6 +45,7 @@ export class LocalPresenceTransport {
         roles: Array.isArray(p.roles) ? p.roles.slice(0, 6).map((r) => String(r).slice(0, 24)) : [],
         bio: String(p.bio || '').slice(0, 140),
         avatar: /^[a-z0-9_]{3,40}$/.test(p.avatar) ? p.avatar : null,
+        look: sanitizeLook(p.look),
         x: Number(msg.x) || 0,
         z: Number(msg.z) || 0,
         ry: Number(msg.ry) || 0,

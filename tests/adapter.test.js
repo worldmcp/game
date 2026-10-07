@@ -198,3 +198,43 @@ test('unclaimed local business: claim goes to verification, feedback once per us
   await adapter.business.feedback('lb_fixit_repair', 'active');
   await assert.rejects(adapter.business.feedback('lb_fixit_repair', 'closed'), /already/);
 });
+
+test('venue units: seeded food-court stall takes orders; apartments let you sleep', async () => {
+  const { adapter, advance } = harness();
+  const parcels = await adapter.land.listParcels();
+  const suya = parcels.find((p) => p.id === 'u-fc-1');
+  assert.equal(suya.building.businessName, 'Suya Spot');
+  const biz = await adapter.commerce.getBusiness('pb_u-fc-1');
+  const r = await adapter.commerce.checkout({ businessId: 'pb_u-fc-1', items: [{ sku: biz.catalog[0].sku, qty: 1 }], fulfillment: 'pickup' });
+  assert.ok(r.order.id);
+  await advance(10000);
+  const o = await adapter.orders.track(r.order.id);
+  assert.equal(o.status, 'ready_for_pickup', 'bot merchant runs the stall');
+  await assert.rejects(adapter.needs.performActivity('sleep', { placeId: 'grand-hotel' }), /apartment/);
+  await adapter.land.rent('u-apt-1', 'apartment');
+  const mine = (await adapter.land.listParcels()).find((p) => p.id === 'u-apt-1');
+  assert.ok(mine.mine && mine.building.template === 'apartment');
+  await assert.rejects(adapter.land.openBusiness('u-apt-1', 'Nope', 'shop'), /Homes cannot/);
+  await adapter.needs.performActivity('sleep', { placeId: 'grand-hotel' });
+});
+
+test('points buy virtual goods (never money) and gate premium looks', async () => {
+  const { adapter } = harness();
+  const w0 = await adapter.wallet.getWallet();
+  assert.equal(w0.points, 100);
+  await adapter.gamification.track('PLAYER_ENTERED_WORLD', {});
+  const w1 = await adapter.wallet.getWallet();
+  assert.ok(w1.points > 100, 'points ride along with XP');
+  assert.equal(w1.balance, w0.balance, 'points never touch money');
+  await adapter.identity.updateProfile({ look: { cap: '#e63946', glasses: true } });
+  let me = await adapter.identity.getCurrentUser();
+  assert.equal(me.look.cap, null, 'locked cap stripped until owned');
+  assert.equal(me.look.glasses, true);
+  await adapter.shop.buyVirtual('acc-cap');
+  await assert.rejects(adapter.shop.buyVirtual('acc-cap'), /already own/);
+  await assert.rejects(adapter.shop.buyVirtual('car-gt'), /more points/);
+  await adapter.identity.updateProfile({ look: { cap: '#e63946' } });
+  me = await adapter.identity.getCurrentUser();
+  assert.equal(me.look.cap, '#e63946');
+  assert.ok((await adapter.wallet.getWallet()).owned.includes('acc-cap'));
+});

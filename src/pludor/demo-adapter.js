@@ -8,6 +8,7 @@
 
 import { ECONOMY } from '../config/economy.js';
 import { PARCELS, PLACES, TOKENS, UNIT_SEEDS, WORLD } from '../config/nova-city.js';
+import { sanitizeLook, enforceOwnership } from '../core/look.js';
 import * as D from './demo-data.js';
 import { CLIENT_REPORTABLE_EVENTS, PludorError } from './contract.js';
 import { awardXp, checkAchievements, levelForXp, nextRank, rankFor } from '../core/progression.js';
@@ -104,6 +105,8 @@ export class DemoPludorAdapter {
       skillXp: {},
       needs: initialNeeds(this.eco.needs, t),
       wallet: { balance: this.eco.currency.demoStartingBalance, escrowHeld: 0, tx: [] },
+      points: this.eco.points?.start ?? 100,
+      owned: [],
       orders: [],
       bookings: [],
       applications: {},
@@ -132,7 +135,11 @@ export class DemoPludorAdapter {
   }
 
   _load(id = this.me.id) {
-    return this.store.get(this._userKey(id)) || this._blankUser({ id, handle: id, displayName: id });
+    const st = this.store.get(this._userKey(id)) || this._blankUser({ id, handle: id, displayName: id });
+    // Older saves predate Pludor Points and virtual goods.
+    if (st.points === undefined) st.points = this.eco.points?.start ?? 100;
+    st.owned ||= [];
+    return st;
   }
 
   _save(st, id = this.me.id) {
@@ -236,10 +243,14 @@ export class DemoPludorAdapter {
 
     const before = levelForXp(st.xp, this.eco.levelCurve).level;
     st.xp += xp;
+    // Points ride along with XP; they buy virtual goods only, never money.
+    const pts = Math.round(xp * (this.eco.points?.perXp ?? 0.5));
+    st.points = (st.points || 0) + pts;
     const after = levelForXp(st.xp, this.eco.levelCurve).level;
     const result = {
       event: eventName,
       xp,
+      points: pts,
       levelUp: after > before ? after : null,
       achievements: unlocked.map((id) => ({ id, ...this.eco.achievements[id] })),
       questsCompleted: completed.map((id) => D.QUESTS.find((q) => q.id === id)),
@@ -287,7 +298,7 @@ export class DemoPludorAdapter {
 
   _reputation(st) {
     const r = st.reputation;
-    const score = clamp(40 + r.gigsCompleted * 8 + r.ordersCompleted * 1 + r.courses * 3 + r.hires * 2 + st.relationships.friends.length - r.reportsAgainst * 15, 0, 100);
+    const score = clamp(40 + r.gigsCompleted * 8 + r.ordersCompleted * 1 + r.courses * 5 + r.hires * 2 + st.relationships.friends.length - r.reportsAgainst * 15, 0, 100);
     return { score, ...r };
   }
 
@@ -413,6 +424,7 @@ export class DemoPludorAdapter {
             if (k === 'avatar' && !/^[a-z0-9_]{3,40}$/.test(v)) continue;
             st.profile[k] = v;
           }
+          if ('look' in patch) st.profile.look = enforceOwnership(sanitizeLook(patch.look), st.owned || []);
         });
         A._notify({ kind: 'state' });
         return A._load().profile;
@@ -470,7 +482,7 @@ export class DemoPludorAdapter {
     this.wallet = {
       getWallet: T(() => {
         const st = A._load();
-        return { ...st.wallet, currency: A.eco.currency.code, symbol: A.eco.currency.symbol, demo: true };
+        return { ...st.wallet, points: st.points, owned: st.owned, currency: A.eco.currency.code, symbol: A.eco.currency.symbol, demo: true };
       }),
     };
 
@@ -994,7 +1006,7 @@ export class DemoPludorAdapter {
       listCourses: T(() => {
         const st = A._load();
         return D.COURSES.map((c) => ({
-          id: c.id, title: c.title, provider: c.provider, minutes: c.minutes, grants: c.grants,
+          id: c.id, title: c.title, provider: c.provider, minutes: c.minutes, grants: c.grants, faculty: c.faculty || 'business',
           skillLabel: D.SKILLS[c.grants.skill]?.label, grantsLevel: c.grants.level,
           completed: (st.skills[c.grants.skill] || 0) >= c.grants.level,
           unlocksGigs: D.GIGS.filter((g) => g.courseId === c.id).map((g) => g.title),
@@ -1028,6 +1040,35 @@ export class DemoPludorAdapter {
         const st = A._load();
         return Object.entries(D.SKILLS).map(([id, s]) => ({ id, ...s, level: st.skills[id] || 0 }));
       }),
+    };
+
+    // Pludor Store: virtual goods paid with Points, or Points + Wallet money.
+    this.shop = {
+      listVirtual: T(() => {
+        const st = A._load();
+        return { points: st.points, balance: st.wallet.balance, symbol: A.eco.currency.symbol, items: (A.eco.virtualItems || []).map((i) => ({ ...i, owned: st.owned.includes(i.id) })) };
+      }),
+      buyVirtual: T((itemId) => {
+        const item = (A.eco.virtualItems || []).find((i) => i.id === itemId);
+        if (!item) throw new PludorError('not_found', 'Item not found.');
+        const res = A._mutate((st) => {
+          if (st.owned.includes(item.id)) throw new PludorError('owned', 'You already own this.');
+          if (st.points < item.points) throw new PludorError('insufficient_points', `You need ${item.points - st.points} more points.`);
+          if (item.money) A._debit(st, item.money, 'virtual', `Pludor Store · ${item.name}`);
+          st.points -= item.points;
+          st.owned.push(item.id);
+          return { item, points: st.points, balance: st.wallet.balance };
+        });
+        if (item.money) A._mutateWorld((w) => {
+          const t = (w.treasury ||= { total: 0, byType: {} });
+          t.total = money(t.total + item.money);
+          t.byType.virtual = money((t.byType.virtual || 0) + item.money);
+        });
+        A._analytics('virtual_purchase', { itemId, points: item.points, money: item.money });
+        A._notify({ kind: 'state' });
+        return res;
+      }),
+      owned: T(() => A._load().owned),
     };
 
     this.land = {

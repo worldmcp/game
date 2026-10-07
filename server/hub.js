@@ -91,7 +91,7 @@ export class Hub {
     const pr = st?.profile || {};
     return {
       handle: pr.handle, displayName: pr.displayName, color: pr.color, presence: PRESENCES.has(pr.presence) ? pr.presence : 'Online',
-      roles: pr.roles || [], bio: pr.bio || '', avatar: pr.avatar || null,
+      roles: pr.roles || [], bio: pr.bio || '', avatar: pr.avatar || null, look: pr.look || null,
     };
   }
 

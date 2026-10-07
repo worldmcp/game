@@ -187,8 +187,8 @@ const HANDLERS = {
     const ordered = [...courses].sort((a, b) => blocked.some((g) => g.courseId === b.id) - blocked.some((g) => g.courseId === a.id));
     return {
       reply: blocked.length
-        ? `Finishing ${ordered[0].title} unlocks "${blocked.find((g) => g.courseId === ordered[0].id).title}". Courses run in Pludor Academy.`
-        : 'Here are courses at Pludor Academy.',
+        ? `Finishing ${ordered[0].title} unlocks "${blocked.find((g) => g.courseId === ordered[0].id).title}". Courses run at Pludor University.`
+        : 'Here are courses at Pludor University.',
       results: ordered.slice(0, 4).map((c) => ({ label: c.title, sub: `Unlocks ${c.skillLabel} L${c.grantsLevel}`, actions: [open('course', c.id)] })),
     };
   },

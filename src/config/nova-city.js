@@ -63,9 +63,9 @@ export const PLACES = [
     led: [{ lines: ['FIND', 'YOUR', 'PEOPLE'], tag: 'Signals communities', bg: ['#0f766e', '#22d3ee'] }],
   },
   {
-    id: 'academy', name: 'Pludor Academy', kind: 'education', template: 'tower',
+    id: 'academy', name: 'Pludor University', kind: 'education', template: 'tower', subtitle: 'Five schools · ACCA & partners',
     x: 50, z: -50, w: 30, d: 28, h: 26, facing: 's', color: '#2f4f4f', accent: '#7ee8a2',
-    tags: ['learn', 'course', 'courses', 'acca', 'academy', 'education', 'skills', 'school', 'challenge'],
+    tags: ['learn', 'course', 'courses', 'acca', 'academy', 'university', 'degree', 'certificate', 'education', 'skills', 'school', 'study', 'challenge', 'credibility'],
     link: { type: 'academy', id: 'academy' }, activity: 'study',
   },
   {

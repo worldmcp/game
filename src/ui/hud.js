@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { html, esc, money, raw, PRESENCE_COLORS } from './dom.js';
+import { TIPS } from '../config/tips.js';
 import { PLACES, PARCELS, AGENTS, WORLD, DISTRICT, PLAZA, footprint, entrancePoint, zoneAt } from '../config/nova-city.js';
 import { ECONOMY } from '../config/economy.js';
 import { formatClock } from '../core/world-time.js';
@@ -26,6 +27,7 @@ export class Hud {
     this._bind();
     this._minimapBase();
     this._initStick();
+    this._startTips();
   }
 
   _skeleton() {
@@ -38,6 +40,7 @@ export class Hud {
       <div class="pw-chip pw-online" title="Players online now"><i></i><b class="pw-online-n">1</b> online</div>
       <div class="pw-chip pw-clock" title="World time"><span class="pw-clock-icon">☀️</span><b class="pw-clock-t">--</b></div>
       <button class="pw-chip pw-wallet" data-sheet="wallet" title="Pludor Wallet"><span class="pw-coin">P</span><b class="pw-bal">--</b></button>
+      <button class="pw-chip pw-points" data-sheet="vstore" title="Pludor Points — spend on virtual goods"><span>⭐</span><b class="pw-pts">--</b></button>
       <button class="pw-icon-btn pw-bell" data-sheet="notifications" title="Notifications">🔔<span class="pw-badge" hidden>0</span></button>
       <button class="pw-me-btn" data-sheet="profile" title="Your profile"><span class="pw-av me"></span><span class="pw-me-txt"><b class="pw-me-name">--</b><small class="pw-me-lvl">Level 1</small></span><span class="pw-chev">⌄</span></button>
     </header>
@@ -45,7 +48,7 @@ export class Hud {
       <div class="pw-map-btns"><button data-hud="recenter" title="Recenter">◎</button><button data-hud="zoom" data-arg="1" title="Zoom in">+</button><button data-hud="zoom" data-arg="-1" title="Zoom out">−</button></div>
       <div class="pw-zone"><b>${WORLD.name}</b><small class="pw-zone-name">Central Plaza</small></div></aside>
     <section class="pw-player">
-      <div class="pw-player-head"><span class="pw-av lg me"></span><div class="pw-player-id"><div class="pw-name">--</div><div class="pw-rank">Visitor</div>
+      <div class="pw-player-head"><button class="pw-av-edit" data-hud="studio" title="Avatar Studio"><span class="pw-av lg me"></span><i>✎</i></button><div class="pw-player-id"><div class="pw-name">--</div><div class="pw-rank">Visitor</div>
         <div class="pw-xprow"><i class="pw-xpfill"><b></b></i><small class="pw-xptext">0 XP</small></div></div></div>
       <div class="pw-needs"></div>
       <div class="pw-quick">
@@ -76,6 +79,7 @@ export class Hud {
       <button data-sheet="social"><span>💬</span>Social</button>
       ${f.WORLD_AI_ENABLED ? '<button data-sheet="ai"><span>🤖</span>AI</button>' : ''}
     </nav>
+    <div class="pw-tip" hidden role="status" aria-live="polite"></div>
     ${f.WORLD_AI_ENABLED ? `<form class="pw-ai-box"><div class="pw-ai-head" data-sheet="ai"><span class="pw-ai-bot">🤖</span><b>Ask Pludor AI</b></div>
       <div class="pw-ai-row"><input name="q" autocomplete="off" placeholder='Try: "Find me a shop for rent"' aria-label="Ask Pludor AI"><button aria-label="Send">➤</button></div></form>` : ''}
     <div class="pw-sheet" role="dialog" aria-modal="false"></div>
@@ -153,11 +157,16 @@ export class Hud {
           this._nearSig = null;
         }).catch((e) => this.toast(e.message, '⚠️'));
       case 'home': {
-        const home = app.state.parcels.find((p) => p.mine);
+        // Apartment first (instant), then a home parcel, then any parcel.
+        const apt = app.state.parcels.find((p) => p.mine && p.building?.template === 'apartment');
+        if (apt) return app.enterBuilding('apt', apt.id);
+        const home = app.state.parcels.find((p) => p.mine && !p.venue && p.building?.template === 'home') || app.state.parcels.find((p) => p.mine && !p.venue);
         if (home) return app.navigateTo({ x: home.x, z: home.z - home.d / 2 - 2 }, home.building?.businessName || 'Home');
-        this.toast('You don’t have a home yet — rent a parcel in Riverside Lots', '🏠');
-        return app.sheets.open('land');
+        this.toast('You don’t have a home yet — rent an apartment at Nova Heights or a lot in Riverside', '🏠');
+        return app.visitPlace('nova-heights');
       }
+      case 'studio':
+        return app.sheets.open('avatar');
       default:
     }
   }
@@ -169,6 +178,8 @@ export class Hud {
     const sym = s.wallet?.symbol || '$';
     const bal = money(s.wallet?.balance ?? 0, sym);
     this.q('.pw-bal').textContent = bal;
+    const pts = this.q('.pw-pts');
+    if (pts) pts.textContent = `${(s.wallet?.points ?? 0).toLocaleString()} pts`;
     const qb = this.q('.pw-quick-bal');
     if (qb) qb.textContent = bal;
     const lvl = s.progress.level;
@@ -332,6 +343,8 @@ export class Hud {
       }
       case 'spot':
         return f.acts || [];
+      case 'mycar':
+        return [{ id: 'drive', icon: '🚗', label: 'Drive', run: () => app.openRef(f.ref) }];
       case 'agent':
         return [{ id: 'talk', icon: '🤖', label: `Talk to ${AGENTS.find((a) => a.id === id).name}`, run: () => sheets.open('agent', { id }) }];
       case 'billboard':
@@ -351,6 +364,46 @@ export class Hud {
     if (!this._acts?.length || this.q('.pw-prompt').hidden) return;
     const a = actId ? this._acts.find((x) => x.id === actId) : this._acts[0];
     a?.run();
+  }
+
+  // ───────── guidance bubbles ─────────
+  _startTips() {
+    let order = TIPS.map((_, i) => i).sort(() => Math.random() - 0.5);
+    let k = 0;
+    const next = () => {
+      if (!this.app.sheets?.top && !this._tipOn) {
+        if (k >= order.length) {
+          order = order.sort(() => Math.random() - 0.5);
+          k = 0;
+        }
+        this.tip(TIPS[order[k++]]);
+      }
+      this._tipTimer = setTimeout(next, 75000);
+    };
+    this._tipTimer = setTimeout(next, 18000);
+  }
+
+  tip(t, ms = 14000) {
+    const el = this.q('.pw-tip');
+    if (!el || !t) return;
+    clearTimeout(this._tipHide);
+    this._tipOn = true;
+    el.innerHTML = html`<span class="pw-tip-ico">${t.icon}</span><div class="pw-tip-body"><small>Pludor tip</small><p>${t.text}</p>${t.action ? html`<button class="pw-tip-cta">${t.cta || 'Show me'} →</button>` : ''}</div><button class="pw-tip-x" aria-label="Dismiss">✕</button>`.s;
+    el.hidden = false;
+    requestAnimationFrame(() => el.classList.add('in'));
+    const hide = () => {
+      el.classList.remove('in');
+      this._tipOn = false;
+      setTimeout(() => !this._tipOn && (el.hidden = true), 300);
+    };
+    el.querySelector('.pw-tip-x').onclick = hide;
+    const cta = el.querySelector('.pw-tip-cta');
+    if (cta) cta.onclick = () => {
+      hide();
+      if (t.action.visit) this.app.visitPlace(t.action.visit);
+      else this.app.sheets.open(t.action.sheet, t.action.props || {});
+    };
+    this._tipHide = setTimeout(hide, ms);
   }
 
   // ───────── feedback ─────────

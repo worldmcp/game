@@ -6,8 +6,9 @@ import { html, raw, esc, money, timeAgo, PRESENCE_COLORS } from './dom.js';
 import { PLACES, PARCELS, AGENTS, WORLD, BILLBOARDS, entrancePoint, PLAZA } from '../config/nova-city.js';
 import { ECONOMY } from '../config/economy.js';
 import { CITY_BY_COUNTRY } from '../config/locale.js';
-import { RESIDENTS, SKILLS } from '../pludor/demo-data.js';
+import { RESIDENTS, SKILLS, FACULTIES } from '../pludor/demo-data.js';
 import { PEOPLE } from '../config/assets.js';
+import { LOOK_OPTIONS, DEFAULT_LOOK, sanitizeLook, requiredItem, enforceOwnership } from '../core/look.js';
 import { SERVICE_CATEGORIES } from '../pludor/economy-chain.js';
 import { currentStep } from '../core/quests.js';
 import { EV } from '../core/events.js';
@@ -56,6 +57,7 @@ export class Sheets {
   }
 
   close() {
+    this.app.endStudio?.();
     this.stack = [];
     this.el.classList.remove('open');
     this.el.innerHTML = '';
@@ -85,6 +87,7 @@ export class Sheets {
   async render(keepScroll = false) {
     const t = this.top;
     if (!t) return;
+    if (t.view !== 'avatar') this.app.endStudio?.();
     const id = ++this._renderId;
     const v = VIEWS[t.view];
     const body = this.el.querySelector('.pw-sheet-body');
@@ -626,12 +629,29 @@ PLACE_KINDS.community = {
 // Academy → existing ACCA / courses / challenges.
 PLACE_KINDS.education = {
   async render(app, props, s, p) {
-    return html`${placeHeader(app, p, html`<div class="pw-hero-acts">${activityBtn(p)}</div>`)}${eventStrip(app, p.id)}<p class="pw-blurb">Learn → qualify → work → earn. Courses unlock skills that gigs require.</p>${coursesList(app)}${skillsList(app)}`;
+    return html`${placeHeader(app, p, html`<div class="pw-hero-acts">${activityBtn(p)}</div>`)}${eventStrip(app, p.id)}<p class="pw-blurb">Learn → qualify → work → earn. Every course you finish raises your credibility and unlocks gigs that need the skill.</p>${universityBody(app, props)}`;
   },
+  actions: { fac: (app, props, f, s) => ((props.faculty = f), s.render(true)) },
 };
 
-function coursesList(app) {
-  return html`<div class="pw-list">${app.state.courses.map((c) => html`<button class="pw-course ${c.completed ? 'done' : ''}" ${A('view', { view: 'course', props: { id: c.id } })}><div><span class="pw-tag">${c.provider}</span> <b>${c.title}</b><small>${c.minutes} min · unlocks ${c.skillLabel} L${c.grantsLevel}${c.unlocksGigs.length ? ` · ${c.unlocksGigs.length} gig${c.unlocksGigs.length > 1 ? 's' : ''}` : ''}</small></div><span>${c.completed ? '✓' : '→'}</span></button>`)}</div>`;
+// Pludor University: credibility card, school tabs, course list, skills.
+function universityBody(app, props) {
+  const rep = app.state.progress?.reputation || app.state.profile?.reputation || { score: 40, courses: 0 };
+  const courses = app.state.courses || [];
+  const done = courses.filter((c) => c.completed);
+  const fac = props.faculty || 'all';
+  const tier = rep.score >= 85 ? 'Distinguished' : rep.score >= 70 ? 'Trusted' : rep.score >= 55 ? 'Established' : 'Emerging';
+  return html`<div class="pw-cred"><div class="pw-cred-score" style="--v:${rep.score}"><b>${rep.score}</b><small>/100</small></div><div><b>Credibility · ${tier}</b><small>${done.length} of ${courses.length} courses · ${rep.gigsCompleted || 0} gigs completed</small>
+      <div class="pw-cred-badges">${FACULTIES.map((f) => {
+        const n = done.filter((c) => c.faculty === f.id).length;
+        return html`<span class="${n ? 'on' : ''}" title="${f.name}: ${n} credential${n === 1 ? '' : 's'}" style="--c:${f.color}">${f.icon}${n ? html`<i>${n}</i>` : ''}</span>`;
+      })}</div></div></div>
+    <div class="pw-tabs pw-tabs-scroll"><button class="${fac === 'all' ? 'on' : ''}" ${A('fac', 'all')}>All</button>${FACULTIES.map((f) => html`<button class="${fac === f.id ? 'on' : ''}" ${A('fac', f.id)}>${f.icon} ${f.name.replace('School of ', '')}</button>`)}</div>
+    ${coursesList(app, fac)}${skillsList(app)}`;
+}
+
+function coursesList(app, faculty = 'all') {
+  return html`<div class="pw-list">${app.state.courses.filter((c) => faculty === 'all' || c.faculty === faculty).map((c) => html`<button class="pw-course ${c.completed ? 'done' : ''}" ${A('view', { view: 'course', props: { id: c.id } })}><div><span class="pw-tag">${c.provider}</span> <b>${c.title}</b><small>${c.minutes} min · unlocks ${c.skillLabel} L${c.grantsLevel}${c.unlocksGigs.length ? ` · ${c.unlocksGigs.length} gig${c.unlocksGigs.length > 1 ? 's' : ''}` : ''}</small></div><span>${c.completed ? '✓' : '→'}</span></button>`)}</div>`;
 }
 
 function skillsList(app) {
@@ -1286,8 +1306,9 @@ VIEWS.shops = {
   title: 'Shops & services',
   root: true,
   render(app) {
-    const list = PLACES.filter((p) => ['cafe', 'restaurant', 'store', 'service', 'market'].includes(p.kind));
-    return html`<p class="pw-muted">Real businesses. Orders and bookings go through Pludor checkout.</p><div class="pw-list">${list.map((p) => {
+    const list = PLACES.filter((p) => ['cafe', 'restaurant', 'store', 'service', 'market', 'foodcourt', 'hotel', 'supermarket'].includes(p.kind));
+    return html`<button class="pw-store-banner" ${A('view', { view: 'vstore', props: {} })}><span>⭐</span><div><b>Pludor Store</b><small>Virtual clothes, cars, decor — pay with Points (+ wallet)</small></div><em>→</em></button>
+      <p class="pw-muted">Real businesses. Orders and bookings go through Pludor checkout.</p><div class="pw-list">${list.map((p) => {
       const v = app.placeView(p);
       return html`<div class="pw-result"><div><b>${KIND_ICON[p.kind]} ${p.name}</b><small>${v.kindLabel}${p.hours ? (v.open ? ' · open' : ' · closed') : ''}${v.rating ? ` · ★ ${v.rating}` : ''}</small></div><div class="pw-row tight">${btn('Go', 'go', goArg(p), 'sm')}${btn('Open', 'place', p.id, 'sm ghost')}</div></div>`;
     })}</div>${btn('My orders', 'view', { view: 'orders' }, 'ghost')}`;
@@ -1350,10 +1371,14 @@ VIEWS.social = {
 };
 
 VIEWS.learn = {
-  title: 'Learn',
+  title: 'Pludor University',
   root: true,
-  render(app) {
-    return html`<p class="pw-muted">Courses from ACCA, Creator Academy and Pludor Academy unlock skills for gigs.</p>${coursesList(app)}${skillsList(app)}${btn('📍 Go to Pludor Academy', 'go', goArg(placeById('academy')), 'ghost')}`;
+  render(app, props) {
+    return html`<p class="pw-muted">Pludor University: courses from ACCA and partners. Finish them to earn credentials, raise your credibility and qualify for better gigs.</p>${universityBody(app, props)}${btn('📍 Go to Pludor University', 'visit', 'academy', 'ghost')}`;
+  },
+  actions: {
+    fac: (app, props, f, s) => ((props.faculty = f), s.render(true)),
+    visit: (app, props, id) => (app.sheets.close(), app.visitPlace(id)),
   },
 };
 
@@ -1503,6 +1528,136 @@ VIEWS.profile = {
 };
 
 // SETTINGS ─────────────────────────────────────────────────
+// AVATAR STUDIO ────────────────────────────────────────────
+// Snapchat-style editor: pick a body, then skin tone, hair, outfit colour,
+// height/build and accessories, previewed live on your own character.
+const STUDIO_TABS = [['body', 'Body'], ['skin', 'Skin'], ['hair', 'Hair'], ['outfit', 'Outfit'], ['shape', 'Shape'], ['extras', 'Extras']];
+const ownedItems = (app) => app.state.wallet?.owned || [];
+const swatches = (app, key, list, cur, allowNone = true) => html`<div class="pw-swatches">${allowNone ? html`<button class="pw-swatch none ${!cur ? 'on' : ''}" ${A('set', { key, value: null })} title="Original">∅</button>` : ''}${list.map((c) => {
+  const need = requiredItem(key, c);
+  const locked = need && !ownedItems(app).includes(need);
+  return html`<button class="pw-swatch ${cur === c ? 'on' : ''} ${locked ? 'locked' : ''}" style="--c:${c}" ${locked ? A('unlock', need) : A('set', { key, value: c })} title="${locked ? 'Unlock in the Pludor Store' : c}"></button>`;
+})}</div>`;
+
+VIEWS.avatar = {
+  title: 'Avatar Studio',
+  async render(app, props) {
+    if (!props.draft) props.draft = { person: app.player.userData.person, look: { ...DEFAULT_LOOK, ...(app.player.userData.look || app.state.profile?.look || {}) } };
+    app.startStudio?.();
+    const d = props.draft;
+    props.tab ||= 'body';
+    let body;
+    if (props.tab === 'body') {
+      body = html`<div class="pw-looks">${PEOPLE.map((p) => {
+        const pic = app.portrait(p.id);
+        return html`<button class="pw-look ${d.person === p.id ? 'on' : ''}" ${A('person', p.id)} title="${p.label}"><span style="${pic ? `background-image:url(${pic})` : ''}"></span><small>${p.label.split(' · ')[1] || p.label}</small></button>`;
+      })}</div>`;
+    } else if (props.tab === 'skin') body = html`<p class="pw-muted">Skin tone</p>${swatches(app, 'skin', LOOK_OPTIONS.skin, d.look.skin)}`;
+    else if (props.tab === 'hair') body = html`<p class="pw-muted">Hair colour</p>${swatches(app, 'hair', LOOK_OPTIONS.hair, d.look.hair)}`;
+    else if (props.tab === 'outfit') body = html`<p class="pw-muted">Outfit colour</p>${swatches(app, 'top', LOOK_OPTIONS.outfit, d.look.top)}`;
+    else if (props.tab === 'shape') {
+      body = html`<label class="pw-mini">Height <b>${Math.round(d.look.height * 100)}%</b><input type="range" min="0.9" max="1.1" step="0.01" value="${d.look.height}" data-change="height"></label>
+        <label class="pw-mini">Build <b>${Math.round(d.look.build * 100)}%</b><input type="range" min="0.88" max="1.15" step="0.01" value="${d.look.build}" data-change="build"></label>`;
+    } else {
+      const hp = ownedItems(app).includes('acc-headphones');
+      body = html`<div class="pw-grid2"><button class="pw-tile ${d.look.glasses ? 'on' : ''}" ${A('toggle', 'glasses')}><span>🕶️</span>Glasses</button><button class="pw-tile ${d.look.headphones ? 'on' : ''}" ${hp ? A('toggle', 'headphones') : A('unlock', 'acc-headphones')}><span>🎧</span>Headphones${hp ? '' : ' 🔒'}</button></div>
+        <p class="pw-muted">Cap</p>${swatches(app, 'cap', LOOK_OPTIONS.cap, d.look.cap)}
+        <p class="pw-muted">Backpack</p>${swatches(app, 'backpack', LOOK_OPTIONS.backpack, d.look.backpack)}
+        <p class="pw-muted">🔒 items are virtual goods — unlock them with Points in the Pludor Store.</p>`;
+    }
+    return html`<p class="pw-muted">Drag the world to turn your character. Changes preview live.</p>${tabs(props, STUDIO_TABS)}${body}
+      <div class="pw-row">${btn('💾 Save look', 'save', null)}${btn('🎲 Surprise me', 'random', null, 'ghost')}${btn('↺ Reset', 'reset', null, 'ghost')}</div>`;
+  },
+  actions: {
+    tab: tabAction,
+    person(app, props, id, s) {
+      props.draft.person = id;
+      app.previewLook(props.draft);
+      s.render(true);
+    },
+    set(app, props, { key, value }, s) {
+      props.draft.look[key] = value;
+      app.previewLook(props.draft);
+      s.render(true);
+    },
+    async unlock(app, props, id, s) {
+      const it = ECONOMY.virtualItems.find((x) => x.id === id);
+      if (!(await app.hud.confirm(`Unlock ${it.name}?`, `${it.points} points${it.money ? ` + ${sym()}${it.money} from your wallet` : ''}. Virtual item for your avatar.`, 'Unlock'))) return;
+      await app.api.shop.buyVirtual(id);
+      app.hud.toast(`${it.name} unlocked`, it.icon);
+      await app.refreshLight();
+      s.render(true);
+    },
+    toggle(app, props, key, s) {
+      props.draft.look[key] = !props.draft.look[key];
+      app.previewLook(props.draft);
+      s.render(true);
+    },
+    random(app, props, _, s) {
+      const pick = (a) => a[Math.floor(Math.random() * a.length)];
+      props.draft = {
+        person: pick(PEOPLE).id,
+        look: enforceOwnership({ ...DEFAULT_LOOK, skin: pick(LOOK_OPTIONS.skin), hair: pick(LOOK_OPTIONS.hair), top: pick(LOOK_OPTIONS.outfit), height: 0.95 + Math.random() * 0.1, build: 0.94 + Math.random() * 0.12, glasses: Math.random() < 0.3, headphones: Math.random() < 0.2, cap: Math.random() < 0.3 ? pick(LOOK_OPTIONS.cap) : null, backpack: Math.random() < 0.3 ? pick(LOOK_OPTIONS.backpack) : null }, ownedItems(app)),
+      };
+      app.previewLook(props.draft);
+      s.render(true);
+    },
+    reset(app, props, _, s) {
+      props.draft.look = { ...DEFAULT_LOOK };
+      app.previewLook(props.draft);
+      s.render(true);
+    },
+    async save(app, props) {
+      const look = sanitizeLook(props.draft.look);
+      await app.api.identity.updateProfile({ avatar: props.draft.person, look });
+      app.state.profile = { ...app.state.profile, avatar: props.draft.person, look };
+      app.studioSaved = true;
+      app.hud.toast('Looking good! Everyone now sees your new look.', '✨');
+      app.sheets.close();
+    },
+  },
+  changes: {
+    height(app, props, v, s) {
+      props.draft.look.height = Number(v);
+      app.previewLook(props.draft);
+      s.render(true);
+    },
+    build(app, props, v, s) {
+      props.draft.look.build = Number(v);
+      app.previewLook(props.draft);
+      s.render(true);
+    },
+  },
+};
+
+// PLUDOR STORE (virtual goods) ─────────────────────────────
+VIEWS.vstore = {
+  title: 'Pludor Store',
+  async render(app) {
+    const s = await app.api.shop.listVirtual();
+    const kinds = [['look', 'Avatar'], ['car', 'Cars'], ['decor', 'Home decor'], ['building', 'Buildings']];
+    const price = (i) => `${i.points} pts${i.money ? ` + ${s.symbol}${i.money}` : ''}`;
+    return html`<div class="pw-kv"><div><span>Points</span><b>⭐ ${s.points.toLocaleString()}</b></div><div><span>Wallet</span><b>${$m(s.balance)}</b></div></div>
+      <p class="pw-muted">Virtual goods live in the game. Points come from playing (XP); wallet money is real. Points never turn into money.</p>
+      ${kinds.map(([k, label]) => {
+        const items = s.items.filter((i) => i.kind === k);
+        return items.length ? html`<h4>${label}</h4><div class="pw-list">${items.map((i) => html`<div class="pw-card pw-row-card"><span class="pw-ico">${i.icon}</span><div class="pw-grow"><b>${i.name}</b><small>${i.desc}</small></div>${i.owned ? html`<span class="pw-tag ok">Owned</span>` : btn(price(i), 'buy', i.id, `sm ${s.points >= i.points ? '' : 'ghost'}`)}</div>`)}</div>` : '';
+      })}
+      ${btn('🎨 Open Avatar Studio', 'view', { view: 'avatar', props: {} }, 'ghost')}`;
+  },
+  actions: {
+    async buy(app, props, id, s) {
+      const it = ECONOMY.virtualItems.find((x) => x.id === id);
+      if (!(await app.hud.confirm(`Buy ${it.name}?`, `${it.points} points${it.money ? ` + ${sym()}${it.money} from your Pludor Wallet` : ''}. Virtual item — yours to use in the World.`, 'Buy'))) return;
+      await app.api.shop.buyVirtual(id);
+      app.hud.toast(`${it.name} unlocked`, it.icon);
+      await app.refresh();
+      app.onVirtualOwned?.();
+      s.render(true);
+    },
+  },
+};
+
 VIEWS.settings = {
   title: 'Settings',
   root: true,
@@ -1510,7 +1665,8 @@ VIEWS.settings = {
     const u = app.state.profile;
     const PRESENCE = ['Online', 'Away', 'Busy', 'Working', 'Shopping', 'Playing', 'Learning', 'Available for Work', 'Hiring', 'Invisible'];
     const current = app.player.userData.person;
-    return html`<h4>Your look</h4><p class="pw-muted">Choose your character. Everyone in the world sees this look.</p>
+    return html`<h4>Your look</h4><p class="pw-muted">Choose your character, then make it yours in the Avatar Studio. Everyone in the world sees this look.</p>
+      ${btn('🎨 Open Avatar Studio', 'view', { view: 'avatar', props: {} })}
       <div class="pw-looks">${PEOPLE.map((p) => {
         const pic = app.portrait(p.id);
         return html`<button class="pw-look ${current === p.id ? 'on' : ''}" ${A('look', p.id)} title="${p.label}"><span style="${pic ? `background-image:url(${pic})` : ''}"></span><small>${p.label.split(' · ')[1] || p.label}</small></button>`;

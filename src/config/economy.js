@@ -137,5 +137,21 @@ export const ECONOMY = {
 
   transit: { worldRideFee: 0 },
 
+  // Pludor Points: earned with XP (pointsPerXp), spent — alone or together
+  // with Wallet money — on VIRTUAL game assets. Points never convert to money.
+  points: { start: 100, perXp: 0.5 },
+  virtualItems: [
+    { id: 'acc-cap', name: 'Snapback caps', icon: '🧢', kind: 'look', points: 80, money: 0, desc: 'Six colours of cap for your avatar.' },
+    { id: 'acc-headphones', name: 'Studio headphones', icon: '🎧', kind: 'look', points: 120, money: 0, desc: 'Over-ear cans, always in style.' },
+    { id: 'acc-backpack', name: 'City backpack', icon: '🎒', kind: 'look', points: 150, money: 0, desc: 'Five colourways.' },
+    { id: 'hair-fantasy', name: 'Fantasy hair colours', icon: '💜', kind: 'look', points: 150, money: 0, desc: 'Violet, cyan and pink hair.' },
+    { id: 'outfit-neon', name: 'Neon outfit pack', icon: '🌈', kind: 'look', points: 200, money: 2, desc: 'Neon pink, ice blue and electric violet outfits.' },
+    { id: 'car-city', name: 'City EV', icon: '🚙', kind: 'car', points: 400, money: 15, color: '#4cc9f0', desc: 'Parks outside your home. Tap it to drive anywhere in the city.' },
+    { id: 'car-gt', name: 'Nova GT', icon: '🏎️', kind: 'car', points: 800, money: 40, color: '#e63946', desc: 'The fastest way to arrive in style.' },
+    { id: 'decor-plants', name: 'Home plant pack', icon: '🪴', kind: 'decor', points: 60, money: 0, desc: 'Greenery for your apartment or home.' },
+    { id: 'decor-art', name: 'Skyline art print', icon: '🖼️', kind: 'decor', points: 90, money: 1, desc: 'A framed print for your living room.' },
+    { id: 'trim-neon', name: 'Neon storefront trim', icon: '✨', kind: 'building', points: 300, money: 5, desc: 'Glowing trim for your shop or stall sign.' },
+  ],
+
   proximity: { nearbyRadius: 34, approachRadius: 6, interactRadius: 7 },
 };

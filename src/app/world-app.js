@@ -5,12 +5,13 @@
 
 import * as THREE from 'three';
 import { City } from '../render/city.js';
-import { createAvatar, animateAvatar, initHumans, recolorAvatar, setPerson, pickPerson, portraitOf } from '../render/avatar.js';
+import { createAvatar, animateAvatar, initHumans, recolorAvatar, setPerson, pickPerson, portraitOf, applyLook } from '../render/avatar.js';
+import { lookKey } from '../core/look.js';
 import { Environment, PostFX } from '../render/environment.js';
 import { loadModel, fitObject, assetErrors } from '../render/assets.js';
 import { PLACES, PARCELS, BILLBOARDS, AGENTS, TOKENS, PLAZA, DISTRICT, FILLER_CELLS, WORLD, cellBounds, entrancePoint, footprint, zoneAt, facingVector } from '../config/nova-city.js';
 import { ECONOMY } from '../config/economy.js';
-import { TOOLS, RESIDENTS } from '../pludor/demo-data.js';
+import { TOOLS, RESIDENTS, FACULTIES } from '../pludor/demo-data.js';
 import { SpatialGrid } from '../core/spatial-grid.js';
 import { NavGrid } from '../core/pathfind.js';
 import { Obstacles, separate, steer } from '../core/obstacles.js';
@@ -456,7 +457,7 @@ export class WorldApp {
     const p = this.player.position;
     const prof = this.state.profile || {};
     this.transport.publishState({
-      profile: { handle: prof.handle, displayName: prof.displayName, color: prof.color, skin: this.me.skin, presence: prof.presence, roles: prof.roles, bio: prof.bio, avatar: this.player.userData.person },
+      profile: { handle: prof.handle, displayName: prof.displayName, color: prof.color, skin: this.me.skin, presence: prof.presence, roles: prof.roles, bio: prof.bio, avatar: this.player.userData.person, look: this.player.userData.look || null },
       x: +p.x.toFixed(2), z: +p.z.toFixed(2), ry: +this.player.rotation.y.toFixed(2), moving: this.speed > 0.1, emote: this.emote, inside: this.inside?.key || null,
     });
   }
@@ -467,10 +468,12 @@ export class WorldApp {
       live.add(peer.id);
       let entry = this.peers.get(peer.id);
       if (entry && peer.avatar && entry.avatar.userData.person !== peer.avatar) setPerson(entry.avatar, peer.avatar);
+      if (entry && lookKey(peer.look) !== lookKey(entry.avatar.userData.look)) applyLook(entry.avatar, peer.look);
       if (!entry) {
         const av = createAvatar({ color: peer.color, skin: peer.skin, seed: [...peer.id].reduce((a, c) => a + c.charCodeAt(0), 0), quality: this.quality, person: peer.avatar || pickPerson([...peer.id].reduce((a, c) => a + c.charCodeAt(0), 0)) });
         av.position.set(peer.x, 0.2, peer.z);
         av.userData.personRef = { type: 'player', id: peer.id };
+        if (peer.look) applyLook(av, peer.look);
         this.scene.add(av);
         entry = { id: peer.id, avatar: av, speed: 0 };
         this.peers.set(peer.id, entry);
@@ -500,8 +503,10 @@ export class WorldApp {
     ]);
     Object.assign(this.state, { profile, progress, wallet, needs, gigs, parcels, events, tokens, courses });
     if (profile.avatar && profile.avatar !== this.player.userData.person) setPerson(this.player, profile.avatar);
+    if (!this.studio && lookKey(profile.look) !== lookKey(this.player.userData.look)) applyLook(this.player, profile.look, { hi: true });
     for (const p of parcels) this.city.setParcelState(p.id, p.building, p.rentLabel);
     if (this.inside?.spec.units) this._refreshInterior();
+    this._parkMyCars();
     this.hud.render();
     this.sheets.refresh();
   }
@@ -605,7 +610,7 @@ export class WorldApp {
     const open = !p.hours || (t.hoursF >= p.hours[0] && t.hoursF < (p.hours[1] > 24 ? 24 : p.hours[1]));
     return {
       ...p, open, entrance: entrancePoint(p),
-      kindLabel: { cafe: 'Café', restaurant: 'Restaurant', market: 'Market', creator: 'Creator Hub', community: 'Signals community', education: 'Academy', ai: 'AI Studio', games: 'Arcade', transit: 'Transit hub', media: 'Cinema', store: 'Store', service: 'Service', tools: 'Free tools', foodcourt: 'Food court', hotel: 'Hotel', conference: 'Conference center', cowork: 'Cowork space', supermarket: 'Supermarket', apartments: 'Apartments' }[p.kind] || p.kind,
+      kindLabel: { cafe: 'Café', restaurant: 'Restaurant', market: 'Market', creator: 'Creator Hub', community: 'Signals community', education: 'University', ai: 'AI Studio', games: 'Arcade', transit: 'Transit hub', media: 'Cinema', store: 'Store', service: 'Service', tools: 'Free tools', foodcourt: 'Food court', hotel: 'Hotel', conference: 'Conference center', cowork: 'Cowork space', supermarket: 'Supermarket', apartments: 'Apartments' }[p.kind] || p.kind,
       commerce: ['cafe', 'restaurant', 'store'].includes(p.kind),
       bookable: p.kind === 'service' && p.link.id !== 'lb_fixit_repair',
       rating: { biz_casa_nova: 4.7, biz_daily_grind: 4.7, biz_ember_grill: 4.6, biz_kicks_co: 4.8, biz_lumi_salon: 4.9, lb_fixit_repair: 4.1 }[p.link.id],
@@ -702,6 +707,9 @@ export class WorldApp {
         return this.sheets.open('events', { highlight: ref.id });
       case 'spot':
         return this.focus?.acts?.[0]?.run();
+      case 'mycar':
+        this.hud.toast('Hop in — pick where to drive', '🚗');
+        return this.sheets.open('map');
       default:
     }
   }
@@ -712,6 +720,85 @@ export class WorldApp {
     this.api.gamification.track(EV.ENTERED_BUSINESS, { placeId: id, businessId: p.link.id }).then((r) => this.hud.showProgress(r)).catch(() => {});
     this.api.analytics.track('building_entry', { placeId: id });
     this.sheets.open('place', { id });
+  }
+
+  // Cars bought in the Pludor Store park outside your home.
+  _parkMyCars() {
+    const owned = this.state.wallet?.owned || [];
+    const cars = (ECONOMY.virtualItems || []).filter((i) => i.kind === 'car' && owned.includes(i.id));
+    const key = cars.map((c) => c.id).join(',') + (this.state.parcels.find((p) => p.mine)?.id || '');
+    if (key === this._myCarsKey) return;
+    this._myCarsKey = key;
+    for (const g of this.myCars || []) {
+      this.scene.remove(g);
+      this.city.pickables = this.city.pickables.filter((x) => x !== g);
+      this._grid?.remove(`mycar:${g.userData.ref.id}`);
+    }
+    this.myCars = [];
+    const apt = this.state.parcels.find((p) => p.mine && p.building?.template === 'apartment');
+    const home = this.state.parcels.find((p) => p.mine && !p.venue);
+    const base = apt ? entrancePoint(PLACES.find((p) => p.id === apt.venue), 4) : home ? { x: home.x + 6, z: home.z - home.d / 2 - 3 } : { x: 9, z: 31 };
+    cars.forEach((c, i) => {
+      let g;
+      if (this.carTemplate) {
+        g = this.carTemplate.clone(true);
+        g.traverse((o) => {
+          if (o.isMesh && /paint/i.test(o.material.name)) {
+            o.material = o.material.clone();
+            o.material.color.set(c.color);
+          }
+        });
+      } else {
+        g = new THREE.Mesh(new THREE.BoxGeometry(2, 1.3, 4.3), new THREE.MeshStandardMaterial({ color: c.color, metalness: 0.4, roughness: 0.35 }));
+        g.position.y = 0.65;
+      }
+      const holder = new THREE.Group();
+      holder.add(g);
+      holder.position.set(base.x + i * 2.8, 0.2, base.z + 3);
+      holder.rotation.y = Math.PI / 2;
+      holder.userData.ref = { type: 'mycar', id: c.id };
+      this.scene.add(holder);
+      this.city.pickables.push(holder);
+      this.myCars.push(holder);
+      this.obstacles.add(holder.position.x, holder.position.z, 1.4);
+      this._grid?.upsert(`mycar:${c.id}`, holder.position.x, holder.position.z, { ref: { type: 'mycar', id: c.id }, label: `Your ${c.name}`, r: 4 });
+    });
+  }
+
+  onVirtualOwned() {
+    this._parkMyCars();
+  }
+
+  // ───────────────────────── avatar studio ─────────────────────────
+  startStudio() {
+    if (this.studio) return;
+    this.cancelNav();
+    this.studio = { person: this.player.userData.person, look: this.player.userData.look || null, cam: { yaw: this.cam.yaw, pitch: this.cam.pitch, dist: this.cam.dist } };
+    this.studioSaved = false;
+    // Face the camera: camera sits in front of the player.
+    this.cam.yaw = this.player.rotation.y;
+    this.cam.pitch = 0.1;
+    this.cam.dist = 2.7;
+    this.cam.curDist = undefined;
+  }
+
+  previewLook(draft) {
+    if (draft.person !== this.player.userData.person) setPerson(this.player, draft.person);
+    applyLook(this.player, draft.look, { hi: true });
+  }
+
+  endStudio() {
+    const st = this.studio;
+    if (!st) return;
+    this.studio = null;
+    if (!this.studioSaved) {
+      // Discard the preview.
+      if (st.person !== this.player.userData.person) setPerson(this.player, st.person);
+      applyLook(this.player, st.look, { hi: true });
+    }
+    Object.assign(this.cam, st.cam);
+    this.cam.curDist = undefined;
+    if (this.transport) this._publish();
   }
 
   // ───────────────────────── interiors ─────────────────────────
@@ -784,7 +871,10 @@ export class WorldApp {
         extra.menu = (biz.catalog || []).slice(0, 7).map((c) => ({ name: c.name, price: `${this.state.wallet?.symbol || '$'}${c.price}` }));
       }
       if (spec.kind === 'cowork' || spec.kind === 'creator') extra.gigs = this.state.gigs.filter((g) => !g.mine && (!g.status || g.status === 'open')).slice(0, 6).map((g) => ({ title: g.title, budget: g.compensation?.amount ?? '' }));
-      if (spec.kind === 'classroom') extra.courses = (this.state.courses || []).slice(0, 6).map((c) => ({ title: c.title, minutes: c.minutes || c.durationMin }));
+      if (spec.kind === 'classroom') {
+        extra.courses = (this.state.courses || []).map((c) => ({ title: c.title, minutes: c.minutes || c.durationMin, faculty: c.faculty, done: c.completed }));
+        extra.faculties = FACULTIES;
+      }
       if (spec.kind === 'cinema' || spec.kind === 'conference') extra.liveHandles = [...this.bots.values()].map((b) => b.handle).concat(['kemi', 'dev', 'ines']).slice(0, 6);
     } catch {
       /* boards fall back to defaults */
@@ -1048,7 +1138,7 @@ export class WorldApp {
 
   _movePlayer(dt, t) {
     const pos = this.player.position;
-    const { ix, iz, run } = this._input();
+    const { ix, iz, run } = this.studio ? { ix: 0, iz: 0, run: false } : this._input();
     let dx = 0;
     let dz = 0;
     if (ix || iz) {
@@ -1425,6 +1515,7 @@ export class WorldApp {
       for (const p of PARCELS.filter((x) => !x.venue)) this._grid.upsert(`parcel:${p.id}`, p.x, p.z - p.d / 2 - 1, { ref: { type: 'parcel', id: p.id }, label: p.name, r: 8 });
       if (this.flags.WORLD_ADS_ENABLED) for (const b of this.city.adSlots.filter((x) => !x.y)) this._grid.upsert(`bb:${b.id}`, b.x, b.z, { ref: { type: 'billboard', id: b.id }, label: 'Billboard', r: 9 });
       for (const a of AGENTS) this._grid.upsert(`agent:${a.id}`, a.x, a.z, { ref: { type: 'agent', id: a.id }, label: `${a.name} · ${a.role}`, r: 4.5 });
+      for (const g of this.myCars || []) this._grid.upsert(`mycar:${g.userData.ref.id}`, g.position.x, g.position.z, { ref: g.userData.ref, label: 'Your car', r: 4 });
       this._grid.upsert('plaza', 0, 0, { ref: { type: 'plaza', id: PLAZA.id }, label: 'Central Plaza fountain', r: 8.5 });
     }
     for (const p of this.people()) this._grid.upsert(`player:${p.id}`, p.x, p.z, { ref: { type: 'player', id: p.id }, label: `@${p.name}`, r: PROX.approachRadius, person: p });
@@ -1470,7 +1561,7 @@ export class WorldApp {
   _camera(dt) {
     const c = this.cam;
     const k = Math.min(1, dt * 6);
-    const ty = this.floorY + 1.4;
+    const ty = this.floorY + (this.studio ? 1.05 : 1.4);
     if (Math.abs(c.target.y - ty) > 5) c.target.set(this.player.position.x, ty, this.player.position.z);
     c.target.lerp(new THREE.Vector3(this.player.position.x, ty, this.player.position.z), k);
     const dir = new THREE.Vector3(Math.sin(c.yaw) * Math.cos(c.pitch), Math.sin(c.pitch), Math.cos(c.yaw) * Math.cos(c.pitch));
@@ -1506,7 +1597,7 @@ export class WorldApp {
     }
     if (this.camera.position.y < this.floorY + 0.4) this.camera.position.y = this.floorY + 0.4;
     // Look slightly above the player so the skyline fills the frame when close.
-    const lift = c.lookUp * Math.max(0, 1 - c.pitch / 0.7) * Math.min(1, c.curDist / 7);
+    const lift = this.studio ? 0 : c.lookUp * Math.max(0, 1 - c.pitch / 0.7) * Math.min(1, c.curDist / 7);
     this.camera.lookAt(c.target.x, c.target.y + lift, c.target.z);
     // Shadow frustum follows the player.
     this.sun.target.position.copy(c.target);
