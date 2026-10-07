@@ -6,6 +6,13 @@
 export const ECONOMY = {
   currency: { code: 'USD', symbol: '$', demoStartingBalance: 250 },
 
+  // Platform revenue: a cut of every player-to-player transaction.
+  fees: { commerce: 0.05, delivery: 0.15, gigs: 0.08, marketplace: 0.05 },
+  deliveryFee: 4,
+  // Demo residents fill roles (merchant kitchens, back-up couriers) so the
+  // chain completes even when few real players are online. Disable in prod.
+  demo: { botCouriers: true, botCourierDelayMs: 45000, botTravelMs: 15000, botPrepMs: 8000 },
+
   time: {
     // One in-world day lasts this many real minutes. Shared by all players.
     realMinutesPerDay: 48,
@@ -47,6 +54,7 @@ export const ECONOMY = {
     PLAYER_ADDED_FRIEND: { xp: 15, once: 'ever', key: 'userId' },
     PLAYER_FOLLOWED: { xp: 5, once: 'ever', key: 'userId' },
     PLAYER_PURCHASED: { xp: 25, dailyCap: 5 },
+    PLAYER_SOLD: { xp: 20, dailyCap: 20 },
     PLAYER_BOOKED: { xp: 25, dailyCap: 5 },
     PLAYER_COMPLETED_GIG: { xp: 120 },
     PLAYER_APPLIED_GIG: { xp: 10, once: 'ever', key: 'gigId' },

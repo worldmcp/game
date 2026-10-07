@@ -43,14 +43,15 @@ async function loadPerson(id) {
 }
 
 // Load animation sets + core people, then stream the rest in the background.
-export async function initHumans(quality = 'high') {
+export async function initHumans(quality = 'high', priority = []) {
   QUALITY = quality;
   const [am, af] = await Promise.all([loadModel('anims_m'), loadModel('anims_f')]);
   const pick = (g) => Object.fromEntries(['idle', 'walk', 'run', 'wave', 'talk'].map((n) => [n, rootMotionFree(g.animations.find((a) => a.name === n))]));
   clips.m = pick(am);
   clips.f = pick(af);
-  await Promise.all(PEOPLE.filter((p) => p.core).map((p) => loadPerson(p.id)));
-  const rest = PEOPLE.filter((p) => !p.core);
+  const first = new Set([...PEOPLE.filter((p) => p.core).map((p) => p.id), ...priority.filter(Boolean)]);
+  await Promise.all([...first].map((id) => loadPerson(id)));
+  const rest = PEOPLE.filter((p) => !first.has(p.id));
   (async () => {
     for (const p of rest) await loadPerson(p.id).catch(() => {});
   })();

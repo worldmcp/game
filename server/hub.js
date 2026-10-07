@@ -52,7 +52,7 @@ export class Hub {
     let p = this.players.get(user.id);
     if (!p) {
       const saved = this.store.get(`world:pos:${user.id}`) || { x: DISTRICT.spawn.x, z: DISTRICT.spawn.z, ry: Math.PI };
-      p = { id: user.id, x: saved.x, z: saved.z, ry: saved.ry, moving: false, emote: null, last: Date.now(), violations: 0, teleport: null, profile: this._profile(user.id) };
+      p = { id: user.id, x: saved.x, z: saved.z, ry: saved.ry, moving: false, emote: null, last: Date.now(), allow: 3, violations: 0, teleport: null, profile: this._profile(user.id) };
       this.players.set(user.id, p);
       this.grid.upsert(user.id, p.x, p.z);
     }
@@ -133,11 +133,14 @@ export class Hub {
     const z = Number(msg.z);
     if (!Number.isFinite(x) || !Number.isFinite(z)) return;
     const now = Date.now();
-    const dt = Math.max(0.016, (now - p.last) / 1000);
+    const dt = Math.max(0, (now - p.last) / 1000);
     const d = Math.hypot(x - p.x, z - p.z);
+    // Distance budget refills at MAX_SPEED in real time (capped), so sending
+    // messages faster never buys extra movement.
+    p.allow = Math.min(3, p.allow + MAX_SPEED * dt);
     const tp = p.teleport && p.teleport.until > now && Math.hypot(x - p.teleport.x, z - p.teleport.z) < 6;
     const out = x < BOUNDS.x0 || x > BOUNDS.x1 || z < BOUNDS.z0 || z > BOUNDS.z1;
-    if (out || (!tp && d > MAX_SPEED * dt + 1.5)) {
+    if (out || (!tp && d > p.allow)) {
       p.violations += 1;
       if (p.violations % 10 === 1) this.log({ evt: 'move_rejected', user: id, d: +d.toFixed(1), dt: +dt.toFixed(2) });
       this._send(ws, { type: 'correction', x: p.x, z: p.z });
@@ -145,6 +148,7 @@ export class Hub {
       return;
     }
     if (tp) p.teleport = null;
+    else p.allow -= d;
     p.x = x;
     p.z = z;
     p.ry = Number.isFinite(Number(msg.ry)) ? Number(msg.ry) : p.ry;

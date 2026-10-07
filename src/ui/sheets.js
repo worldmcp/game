@@ -6,6 +6,7 @@ import { html, raw, esc, money, timeAgo, PRESENCE_COLORS } from './dom.js';
 import { PLACES, PARCELS, AGENTS, BILLBOARDS, entrancePoint, PLAZA } from '../config/nova-city.js';
 import { ECONOMY } from '../config/economy.js';
 import { RESIDENTS, SKILLS } from '../pludor/demo-data.js';
+import { PEOPLE } from '../config/assets.js';
 import { currentStep } from '../core/quests.js';
 import { EV } from '../core/events.js';
 import { KIND_ICON } from './hud.js';
@@ -1385,5 +1386,64 @@ VIEWS.profile = {
       await app.refresh();
       s.render(true);
     },
+  },
+};
+
+// SETTINGS ─────────────────────────────────────────────────
+VIEWS.settings = {
+  title: 'Settings',
+  root: true,
+  async render(app) {
+    const u = app.state.profile;
+    const PRESENCE = ['Online', 'Away', 'Busy', 'Working', 'Shopping', 'Playing', 'Learning', 'Available for Work', 'Hiring', 'Invisible'];
+    const current = app.player.userData.person;
+    return html`<h4>Your look</h4><p class="pw-muted">Choose your character. Everyone in the world sees this look.</p>
+      <div class="pw-looks">${PEOPLE.map((p) => {
+        const pic = app.portrait(p.id);
+        return html`<button class="pw-look ${current === p.id ? 'on' : ''}" ${A('look', p.id)} title="${p.label}"><span style="${pic ? `background-image:url(${pic})` : ''}"></span><small>${p.label.split(' · ')[1] || p.label}</small></button>`;
+      })}</div>
+      <h4>Status</h4><select class="pw-select" data-change="presence">${PRESENCE.map((p) => html`<option ${u.presence === p ? raw('selected') : ''}>${p}</option>`)}</select>
+      <p class="pw-muted">“Invisible” hides you from other players and from Nearby.</p>
+      <h4>Privacy</h4><div class="pw-grid2"><label class="pw-mini">Who can message me<select class="pw-select" data-change="allowMessages">${['everyone', 'friends', 'nobody'].map((o) => html`<option ${u.allowMessages === o ? raw('selected') : ''}>${o}</option>`)}</select></label><label class="pw-mini">Who can voice call me<select class="pw-select" data-change="allowCalls">${['everyone', 'friends', 'nobody'].map((o) => html`<option ${u.allowCalls === o ? raw('selected') : ''}>${o}</option>`)}</select></label></div>
+      <h4>Graphics</h4><div class="pw-seg">${['high', 'medium', 'low'].map((q) => html`<button class="${app.quality === q ? 'on' : ''}" ${A('quality', q)}>${q[0].toUpperCase() + q.slice(1)}</button>`)}</div>
+      <p class="pw-muted">Low uses simple figures and no shadows — best for older phones.</p>
+      <h4>Controls</h4><p class="pw-muted">WASD / arrows to move · Shift to run · drag to look · scroll to zoom · E to interact · M map · / Pludor AI. On phones: joystick + tap to walk.</p>
+      ${app.logout ? html`<div class="pw-row">${btn('Sign out', 'logout', null, 'ghost danger')}</div>` : html`<p class="pw-muted">Offline demo: your progress is saved in this browser only.</p>`}`;
+  },
+  actions: {
+    async look(app, props, id, s) {
+      await app.api.identity.updateProfile({ avatar: id });
+      app.setPlayerPerson(id);
+      await app.refresh();
+      app.hud.toast('New look saved', '🧑');
+      s.render(true);
+    },
+    quality(app, props, q) {
+      const u = new URL(location.href);
+      u.searchParams.set('quality', q);
+      location.href = u.toString();
+    },
+    logout: (app) => app.logout?.(),
+  },
+  changes: VIEWS.profile.changes,
+};
+
+// INVENTORY ────────────────────────────────────────────────
+// Derived from server records (orders, tickets, coupons, parcels, badges);
+// World keeps no separate item database.
+VIEWS.inventory = {
+  title: 'Inventory',
+  root: true,
+  async render(app) {
+    const o = await app.api.commerce.getOrders();
+    const pr = app.state.progress;
+    const items = [];
+    for (const ord of o.orders) for (const l of ord.lines) items.push({ ...l, from: ord.businessName, status: ord.status });
+    const props = app.state.parcels.filter((p) => p.mine);
+    return html`<h4>Products (${items.length})</h4>${items.length ? html`<div class="pw-inv">${items.map((it) => html`<div class="pw-inv-item"><span>${it.icon || '📦'}</span><b>${it.qty > 1 ? `${it.qty}× ` : ''}${it.name}</b><small>${it.from} · ${it.status}</small></div>`)}</div>` : empty('Nothing yet — shop at Kicks & Co, Casa Nova or the market.')}
+      <h4>Property</h4>${props.length ? html`<div class="pw-list">${props.map((p) => html`<div class="pw-result"><div><b>🔑 ${p.name}</b><small>${p.building?.businessName || ECONOMY.land.templates[p.building?.template]?.label || 'Parcel'}</small></div>${btn('Go', 'go', { x: p.x, z: p.z - p.d / 2 - 2, label: p.name }, 'sm')}</div>`)}</div>` : empty('No property yet.')}
+      <h4>Tickets</h4>${o.tickets.length ? html`<div class="pw-chips">${o.tickets.map((t) => html`<span class="pw-tag">🎟️ ${t.title}</span>`)}</div>` : empty('No tickets.')}
+      <h4>Coupons</h4>${pr.coupons.length ? html`<div class="pw-chips">${pr.coupons.map((c) => html`<span class="pw-tag ok">🏷️ ${c.code} · ${c.percentOff}% off</span>`)}</div>` : empty('No coupons — try the sponsored quests.')}
+      <h4>Badges</h4><div class="pw-chips">${pr.achievements.map((a) => html`<span class="pw-tag">${a.icon} ${a.title}</span>`)}</div>`;
   },
 };

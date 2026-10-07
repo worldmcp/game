@@ -18,7 +18,7 @@ import { Auth, AuthError } from './auth.js';
 import { Hub } from './hub.js';
 import { DemoPludorAdapter } from '../src/pludor/demo-adapter.js';
 import { CONTRACT, CLIENT_REPORTABLE_EVENTS } from '../src/pludor/contract.js';
-import { PLACES, entrancePoint, DISTRICT } from '../src/config/nova-city.js';
+import { PLACES, PARCELS, entrancePoint, DISTRICT } from '../src/config/nova-city.js';
 import { EVENTS } from '../src/pludor/demo-data.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -26,7 +26,7 @@ const STATIC_DIRS = ['src/', 'vendor/', 'assets/', 'styles/'];
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.glb': 'model/gltf-binary', '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
 const RPC = new Set(Object.entries(CONTRACT).flatMap(([ns, ms]) => ms.map((m) => `${ns}.${m}`)));
 // Economic / state-changing calls: idempotent + audited.
-const MUTATING = new Set(['commerce.checkout', 'commerce.book', 'commerce.buyListing', 'work.createGig', 'work.apply', 'work.submit', 'work.hire', 'work.approve', 'land.rent', 'land.openBusiness', 'events.buyTicket', 'events.attend', 'business.claim', 'business.feedback', 'games.submitGame', 'world.collectToken', 'learning.completeCourse', 'social.report', 'social.addFriend', 'social.block', 'messaging.send', 'voice.requestCall']);
+const MUTATING = new Set(['orders.accept', 'orders.reject', 'orders.ready', 'orders.cancel', 'orders.collect', 'delivery.accept', 'delivery.pickup', 'delivery.dropoff', 'business.addProduct', 'business.removeProduct', 'commerce.createListing', 'commerce.checkout', 'commerce.book', 'commerce.buyListing', 'work.createGig', 'work.apply', 'work.submit', 'work.hire', 'work.approve', 'land.rent', 'land.openBusiness', 'events.buyTicket', 'events.attend', 'business.claim', 'business.feedback', 'games.submitGame', 'world.collectToken', 'learning.completeCourse', 'social.report', 'social.addFriend', 'social.block', 'messaging.send', 'voice.requestCall']);
 const STATUS = { own_gig: 409, not_found: 404, forbidden: 403, insufficient_funds: 402, duplicate: 409, taken: 409, pending: 409, already_claimed: 409, sold: 409, closed: 409, cooldown: 429, too_far: 409, not_live: 409, ticket_required: 402, inactive: 409, limit: 409, not_wired: 501 };
 
 export function createWorldServer({ dataDir = join(ROOT, '.data'), admins = [], quiet = false } = {}) {
@@ -97,6 +97,15 @@ export function createWorldServer({ dataDir = join(ROOT, '.data'), admins = [], 
       throw Object.assign(new Error(`${args[0]} is server-emitted only.`), { code: 'forbidden' });
     }
     if (name === 'world.collectToken') args[1] = hub.position(user.id);
+    // Physical steps of the supply chain use the server's position.
+    if (['delivery.pickup', 'delivery.dropoff', 'orders.collect'].includes(name)) args[1] = hub.position(user.id);
+    if (name === 'work.submit') args[2] = hub.position(user.id);
+    if (name === 'commerce.checkout' && args[0] && typeof args[0] === 'object') {
+      const home = Object.entries(store.get('pludor-demo:world')?.parcels || {}).find(([, p]) => p.tenantId === user.id && p.template === 'home');
+      const hp = home && PARCELS.find((p) => p.id === home[0]);
+      args[0].deliverTo = hp ? { x: hp.x, z: hp.z - hp.d / 2 - 2 } : hub.position(user.id);
+    }
+    if (name === 'work.createGig' && args[0] && typeof args[0] === 'object' && args[0].onSite) args[0].location = hub.position(user.id);
     if (name === 'events.attend') {
       const ev = EVENTS.find((e) => e.id === args[0]);
       const place = ev && PLACES.find((p) => p.id === ev.placeId);
@@ -144,7 +153,7 @@ export function createWorldServer({ dataDir = join(ROOT, '.data'), admins = [], 
     if (path === '/api/admin/overview') {
       if (!user.roles.includes('admin')) return send(res, 403, { code: 'forbidden', message: 'Admins only.' });
       const world = store.get('pludor-demo:world') || {};
-      return send(res, 200, { users: store.keys('auth:user:').length, online: hub.onlineCount(), reports: world.reports || [], audit: audit.recent.slice(-100) });
+      return send(res, 200, { users: store.keys('auth:user:').length, online: hub.onlineCount(), treasury: world.treasury || { total: 0, byType: {} }, orders: Object.keys(world.chainOrders || {}).length, reports: world.reports || [], audit: audit.recent.slice(-100) });
     }
     const m = path.match(/^\/api\/rpc\/([a-z]+\.[a-zA-Z]+)$/);
     if (m) {

@@ -16,6 +16,7 @@ import { applyNeedEffects, initialNeeds, needsAt } from '../core/needs.js';
 import { isOpen, worldTimeAt } from '../core/world-time.js';
 import { route as aiRoute } from '../core/ai-intents.js';
 import { resolveRoute } from './routes.js';
+import { bindEconomyChain, SERVICE_CATEGORIES } from './economy-chain.js';
 
 const money = (n) => Math.round(n * 100) / 100;
 const rid = (p) => `${p}_${Math.random().toString(36).slice(2, 10)}`;
@@ -269,6 +270,10 @@ export class DemoPludorAdapter {
     if (this.analyticsLog.length > 300) this.analyticsLog.shift();
   }
 
+  _feed(st) {
+    return applyNeedEffects(st.needs, { hunger: 30, fun: 4 }, this.now(), this.eco.needs, this.eco.time);
+  }
+
   _reputation(st) {
     const r = st.reputation;
     const score = clamp(40 + r.gigsCompleted * 8 + r.ordersCompleted * 1 + r.courses * 3 + r.hires * 2 + st.relationships.friends.length - r.reportsAgainst * 15, 0, 100);
@@ -322,6 +327,10 @@ export class DemoPludorAdapter {
         });
         this._notify({ kind: 'friend', from: msg.from });
         break;
+      case 'notify':
+        // Cross-account notification relayed by the server (orders, deliveries).
+        if (msg.evt && typeof msg.evt === 'object') this._notify(msg.evt);
+        break;
       case 'wave':
         if (blocked || st.relationships.muted.includes(msg.from)) return;
         this._notify({ kind: 'wave', from: msg.from });
@@ -364,6 +373,12 @@ export class DemoPludorAdapter {
     const T = (fn) => (...args) => Promise.resolve().then(() => {
       A._pendingProgress = null;
       return fn(...args);
+    });
+    // Wrapped actions flush queued progress notifications when they finish.
+    this._wrap = (fn) => T(async (...args) => {
+      const out = await fn(...args);
+      A._flush();
+      return out;
     });
 
     this.identity = {
@@ -585,6 +600,17 @@ export class DemoPludorAdapter {
 
     this.commerce = {
       getBusiness: T((businessId) => {
+        if (String(businessId).startsWith('pb_')) {
+          const parcelId = businessId.slice(3);
+          const p = A._world().parcels[parcelId];
+          if (!p?.businessName) throw new PludorError('not_found', 'Business not found.');
+          return {
+            id: businessId, name: p.businessName, category: { restaurant: 'Restaurant', shop: 'Shop', service: 'Services' }[p.category] || 'Shop', ownerId: p.tenantId,
+            owner: A._userSummary(p.tenantId), claimed: true, verified: false, playerOwned: true, parcelId, rating: null, reviewCount: 0,
+            blurb: `A player-run business in Riverside Lots, owned by ${p.tenantName}.`, fulfillment: ['pickup', 'delivery'], catalog: p.catalog || [],
+            open: true, slots: [], coupons: [], feedback: {}, myFeedback: false, claim: null,
+          };
+        }
         const biz = D.BUSINESSES[businessId];
         if (!biz) throw new PludorError('not_found', 'Business not found.');
         const place = PLACES.find((p) => p.link?.id === businessId);
@@ -611,7 +637,15 @@ export class DemoPludorAdapter {
           coupons: st.coupons.filter((c) => !c.used && c.businessId === businessId),
         };
       }),
-      checkout: T(({ businessId, items, fulfillment, couponId, attribution }) => {
+      checkout: T((req) => {
+        const { businessId, items, fulfillment, couponId, attribution } = req || {};
+        // Player storefronts and all delivery orders run through the player
+        // supply chain: escrow → merchant → courier → settlement.
+        if (String(businessId).startsWith('pb_') || fulfillment === 'delivery') {
+          const r = A.chainCheckout(req);
+          A._flush();
+          return r;
+        }
         const biz = D.BUSINESSES[businessId];
         if (!biz?.catalog) throw new PludorError('not_found', 'This business has no catalog.');
         if (!Array.isArray(items) || !items.length) throw new PludorError('empty_cart', 'Your cart is empty.');
@@ -820,7 +854,7 @@ export class DemoPludorAdapter {
         A._flush();
         return res;
       }),
-      submit: T((gigId, deliverable = '') => {
+      submit: T((gigId, deliverable = '', position = null) => {
         const { gig, posted } = findGig(gigId);
         const text = String(deliverable).trim().slice(0, 300);
         if (!text) throw new PludorError('empty', 'Describe or link your deliverable.');
@@ -828,6 +862,8 @@ export class DemoPludorAdapter {
           A._mutateWorld((w) => {
             const g = w.postedGigs.find((x) => x.id === gigId);
             if (g.workerId !== A.me.id || g.status !== 'assigned') throw new PludorError('invalid', 'You are not assigned to this gig.');
+            // On-site jobs (lawn, cleaning …) can only be completed at the location.
+            if (g.location && !(position && Math.hypot(position.x - g.location.x, position.z - g.location.z) <= 20)) throw new PludorError('too_far', 'This job is on-site — go to the location to complete it.');
             g.status = 'submitted';
             g.deliverable = text;
           });
@@ -848,12 +884,13 @@ export class DemoPludorAdapter {
         const amount = money(Number(spec.amount));
         if (title.length < 4) throw new PludorError('invalid', 'Give your gig a title.');
         if (!(amount >= 5 && amount <= 500)) throw new PludorError('invalid_amount', 'Pay must be between 5 and 500.');
-        const category = ['ugc', 'photography', 'design', 'local-service', 'delivery', 'virtual-construction', 'marketing', 'business-services'].includes(spec.category) ? spec.category : 'business-services';
-        const skillMap = { ugc: 'video', photography: 'photography', design: 'design', 'local-service': 'communication', delivery: 'driving', 'virtual-construction': 'construction', marketing: 'marketing', 'business-services': 'communication' };
+        const category = SERVICE_CATEGORIES[spec.category] ? spec.category : 'business-services';
+        const skillMap = Object.fromEntries(Object.entries(SERVICE_CATEGORIES).map(([k, v]) => [k, v.skill]));
+        const loc = spec.location && Number.isFinite(spec.location.x) && Number.isFinite(spec.location.z) ? { x: spec.location.x, z: spec.location.z } : null;
         const gig = {
           id: rid('gig'), title, description: String(spec.description || '').slice(0, 400), category,
           requesterId: A.me.id, placeId: spec.placeId || null, parcelId: spec.parcelId || null,
-          skills: [], suggestedSkill: skillMap[category], mode: 'physical',
+          skills: [], suggestedSkill: skillMap[category], mode: loc ? 'physical' : 'remote', location: loc,
           compensation: { amount, type: 'fixed' }, deliverables: ['As described'], status: 'open', applicants: [], createdAt: A.now(), escrow: amount,
         };
         const res = A._mutate((st) => {
@@ -910,6 +947,12 @@ export class DemoPludorAdapter {
           x.status = 'completed';
           return x;
         });
+        const fee = money(g.escrow * A.eco.fees.gigs);
+        A._mutateWorld((w) => {
+          const t = (w.treasury ||= { total: 0, byType: {} });
+          t.total = money(t.total + fee);
+          t.byType.gigs = money((t.byType.gigs || 0) + fee);
+        });
         A._mutate((st) => {
           st.wallet.escrowHeld = money(st.wallet.escrowHeld - g.escrow);
           A._tx(st, 'escrow_release', 0, `Released ${A.eco.currency.symbol}${g.escrow} to @${A._userSummary(g.workerId).handle}`);
@@ -917,7 +960,7 @@ export class DemoPludorAdapter {
         if (!BOT_IDS.has(g.workerId)) {
           // Worker is another real account: credit them server-side.
           A._mutate((st) => {
-            A._credit(st, g.escrow, 'payout', `Escrow released · ${g.title}`);
+            A._credit(st, money(g.escrow - fee), 'payout', `Escrow released · ${g.title} (after ${Math.round(A.eco.fees.gigs * 100)}% fee)`);
             st.reputation.gigsCompleted += 1;
             A._award(st, 'PLAYER_COMPLETED_GIG', { gigId, category: g.category });
           }, g.workerId);
@@ -1024,7 +1067,8 @@ export class DemoPludorAdapter {
         A._flush();
         return res;
       }),
-      openBusiness: T((parcelId, name) => {
+      openBusiness: T((parcelId, name, category = 'shop') => {
+        if (!['restaurant', 'shop', 'service'].includes(category)) category = 'shop';
         const clean = String(name || '').replace(/[^\p{L}\p{N} &'.-]/gu, '').trim().slice(0, 22);
         if (clean.length < 2) throw new PludorError('invalid', 'Give your business a name.');
         A._mutateWorld((w) => {
@@ -1032,6 +1076,8 @@ export class DemoPludorAdapter {
           if (!p || p.tenantId !== A.me.id) throw new PludorError('forbidden', "You don't rent this parcel.");
           if (p.template === 'home') throw new PludorError('zoning', 'Homes cannot host a storefront.');
           p.businessName = clean;
+          p.category = category;
+          p.catalog ||= [];
         });
         const res = A._mutate((st) => {
           if (!st.profile.roles.includes('Business Owner')) st.profile.roles.push('Business Owner');
@@ -1306,5 +1352,6 @@ export class DemoPludorAdapter {
         return true;
       }),
     };
+    bindEconomyChain(this);
   }
 }

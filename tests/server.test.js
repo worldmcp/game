@@ -184,7 +184,7 @@ test('gig loop across two real users with escrow', async () => {
   assert.equal((await rpc(B.token, 'work.submit', [gig.id, 'Done — photos attached'])).status, 200);
   const bBal = (await rpc(B.token, 'wallet.getWallet')).body.data.balance;
   assert.equal((await rpc(A.token, 'work.approve', [gig.id])).status, 200);
-  assert.equal((await rpc(B.token, 'wallet.getWallet')).body.data.balance, bBal + 20, 'worker paid from escrow');
+  assert.equal((await rpc(B.token, 'wallet.getWallet')).body.data.balance, bBal + 18.4, 'worker paid from escrow minus 8% platform fee');
   assert.equal((await rpc(A.token, 'work.approve', [gig.id])).status, 400, 'cannot release twice');
 });
 
@@ -211,4 +211,110 @@ test('admin endpoint works for admins only and exposes the audit trail', async (
   const o = await api('/api/admin/overview', { token: s.token, method: 'GET' });
   assert.equal(o.status, 200);
   assert.ok(o.body.audit.some((e) => e.name === 'commerce.checkout'));
+});
+
+// Walk a socket's player to a point at a legal pace (server checks speed).
+async function walkTo(ws, from, to, speed = 8) {
+  let { x, z } = from;
+  while (Math.hypot(to.x - x, to.z - z) > 0.5) {
+    const d = Math.hypot(to.x - x, to.z - z);
+    const step = Math.min(d, speed * 0.1);
+    x += ((to.x - x) / d) * step;
+    z += ((to.z - z) / d) * step;
+    ws.send(JSON.stringify({ type: 'state', x, z, ry: 0, moving: true }));
+    await wait(100);
+  }
+  await wait(150);
+  return { x, z };
+}
+
+test('anti-cheat: spamming small moves cannot exceed the speed limit', async () => {
+  const ws = await socket(B.token);
+  const w = await waitFor(ws, (m) => m.type === 'welcome');
+  for (let i = 1; i <= 40; i++) ws.send(JSON.stringify({ type: 'state', x: w.you.x + i * 1.4, z: w.you.z }));
+  await wait(300);
+  assert.ok(ws.inbox.some((m) => m.type === 'correction'), 'burst of moves is rejected');
+  ws.close();
+  await wait(4500); // let presence settle before the next test
+});
+
+test('supply chain: player restaurant → customer orders delivery → player courier delivers → everyone paid', async () => {
+  const carol = (await api('/api/auth/signup', { body: { username: 'carol', password: 'carol password' } })).body;
+  const dave = (await api('/api/auth/signup', { body: { username: 'dave', password: 'dave password' } })).body;
+  // Carol opens a restaurant on a commercial parcel and lists a dish.
+  assert.equal((await rpc(carol.token, 'land.rent', ['p-riverside-5', 'storefront'])).status, 200);
+  assert.equal((await rpc(carol.token, 'land.openBusiness', ['p-riverside-5', "Carol's Kitchen", 'restaurant'])).status, 200);
+  const dish = (await rpc(carol.token, 'business.addProduct', ['p-riverside-5', { name: 'Jollof Bowl', price: 12, icon: '🍛' }])).body.data;
+  assert.equal((await rpc(dave.token, 'business.addProduct', ['p-riverside-5', { name: 'Hack', price: 1 }])).status, 403, 'only the owner manages the menu');
+  const cws = await socket(carol.token);
+  const dws = await socket(dave.token);
+  const dWelcome = await waitFor(dws, (m) => m.type === 'welcome');
+  // Dave orders delivery; money goes to escrow.
+  const dBal = (await rpc(dave.token, 'wallet.getWallet')).body.data.balance;
+  const ord = await rpc(dave.token, 'commerce.checkout', [{ businessId: 'pb_p-riverside-5', items: [{ sku: dish.sku, qty: 1 }], fulfillment: 'delivery' }]);
+  assert.equal(ord.status, 200);
+  const order = ord.body.data.order;
+  assert.deepEqual(order.dropoff, { x: dWelcome.you.x, z: dWelcome.you.z }, 'drop-off is where the server says the customer is');
+  const wDave = (await rpc(dave.token, 'wallet.getWallet')).body.data;
+  assert.equal(wDave.balance, dBal - 16);
+  assert.equal(wDave.escrowHeld, 16);
+  assert.ok(await waitFor(cws, (m) => m.type === 'event' && m.evt.kind === 'merchant-order'), 'merchant notified in realtime');
+  // Merchant accepts and marks ready → courier job opens.
+  assert.equal((await rpc(A.token, 'orders.accept', [order.id])).status, 403, 'only the merchant can accept');
+  await rpc(carol.token, 'orders.accept', [order.id]);
+  await rpc(carol.token, 'orders.ready', [order.id]);
+  const jobs = (await rpc(A.token, 'delivery.jobs')).body.data;
+  const job = jobs.open.find((j) => j.id === order.id);
+  assert.ok(job, 'job visible to other players');
+  assert.equal(job.payout, 3.4, 'courier sees payout after platform fee');
+  // Alice is the courier.
+  const aws = await socket(A.token);
+  const aW = await waitFor(aws, (m) => m.type === 'welcome');
+  assert.equal((await rpc(A.token, 'delivery.accept', [order.id])).status, 200);
+  assert.equal((await rpc(B.token, 'delivery.accept', [order.id])).status, 409, 'job cannot be double-assigned');
+  assert.equal((await rpc(A.token, 'delivery.pickup', [order.id, order.pickup])).status, 409, 'claimed position ignored: must really be at the shop');
+  let pos = await walkTo(aws, aW.you, order.pickup);
+  assert.equal((await rpc(A.token, 'delivery.pickup', [order.id])).status, 200, 'pickup at the shop');
+  assert.equal((await rpc(A.token, 'delivery.dropoff', [order.id])).status, 409, 'cannot drop off from the shop');
+  const aBal = (await rpc(A.token, 'wallet.getWallet')).body.data.balance;
+  const cBal = (await rpc(carol.token, 'wallet.getWallet')).body.data.balance;
+  pos = await walkTo(aws, pos, order.dropoff);
+  assert.equal((await rpc(A.token, 'delivery.dropoff', [order.id])).status, 200, 'delivered');
+  assert.equal((await rpc(A.token, 'wallet.getWallet')).body.data.balance, aBal + 3.4, 'courier paid');
+  assert.equal((await rpc(carol.token, 'wallet.getWallet')).body.data.balance, cBal + 11.4, 'merchant paid minus 5%');
+  assert.equal((await rpc(dave.token, 'wallet.getWallet')).body.data.escrowHeld, 0, 'customer escrow released');
+  const daveOrder = (await rpc(dave.token, 'commerce.getOrders')).body.data.orders.find((o) => o.id === order.id);
+  assert.equal(daveOrder.status, 'delivered', 'customer order history updated');
+  const admin = (await api('/api/auth/login', { body: { username: 'adminuser', password: 'admin password' } })).body;
+  const ov = (await api('/api/admin/overview', { token: admin.token, method: 'GET' })).body;
+  assert.ok(ov.treasury.byType.commerce >= 0.6 && ov.treasury.byType.delivery >= 0.6, 'platform fees recorded');
+  for (const s of [aws, cws, dws]) s.close();
+});
+
+test('service request on-site: worker must be at the location to complete', async () => {
+  const ws = await socket(B.token);
+  const w = await waitFor(ws, (m) => m.type === 'welcome');
+  const { gig } = (await rpc(B.token, 'work.createGig', [{ title: 'Mow my lawn', amount: 30, category: 'home-services', onSite: true }])).body.data;
+  assert.deepEqual(gig.location, { x: w.you.x, z: w.you.z });
+  const eve = (await api('/api/auth/signup', { body: { username: 'eve', password: 'eve password' } })).body;
+  await rpc(eve.token, 'work.apply', [gig.id, 'I have a mower']);
+  await rpc(B.token, 'work.hire', [gig.id, eve.user.id]);
+  const ews = await socket(eve.token);
+  const eW = await waitFor(ews, (m) => m.type === 'welcome');
+  // Eve spawns at the same spot as Bob here, so move her away first.
+  const away = await walkTo(ews, eW.you, { x: eW.you.x + 30, z: eW.you.z });
+  assert.equal((await rpc(eve.token, 'work.submit', [gig.id, 'done'])).status, 409, 'not on site');
+  await walkTo(ews, away, gig.location);
+  assert.equal((await rpc(eve.token, 'work.submit', [gig.id, 'Lawn mowed'])).status, 200, 'on site');
+  ws.close();
+  ews.close();
+});
+
+test('player marketplace listing: seller paid minus fee, cannot buy own', async () => {
+  const l = (await rpc(B.token, 'commerce.createListing', [{ title: 'Used guitar', price: 50, icon: '🎸' }])).body.data;
+  assert.equal((await rpc(B.token, 'commerce.buyListing', [l.id])).status, 400);
+  const sBal = (await rpc(B.token, 'wallet.getWallet')).body.data.balance;
+  assert.equal((await rpc(A.token, 'commerce.buyListing', [l.id])).status, 200);
+  assert.equal((await rpc(B.token, 'wallet.getWallet')).body.data.balance, sBal + 47.5);
+  assert.equal((await rpc(A.token, 'commerce.buyListing', [l.id])).status, 409, 'cannot be sold twice');
 });

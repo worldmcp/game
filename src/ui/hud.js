@@ -33,24 +33,37 @@ export class Hud {
     return `
     <div class="pw-plates" aria-hidden="true"></div>
     <header class="pw-top">
-      <div class="pw-brand"><span class="pw-logo">P</span><span class="pw-brand-text"><b>PLUDOR</b> WORLD</span></div>
-      <label class="pw-search"><span>🔍</span><input type="search" placeholder="Search places, people, gigs… or ask AI" aria-label="Search"></label>
+      <div class="pw-brand"><span class="pw-logo">P</span><span class="pw-brand-text"><b>PLUDOR</b><em>WORLD</em></span></div>
+      <label class="pw-search"><span>🔍</span><input type="search" placeholder="Search places, people, shops, or anything…" aria-label="Search"></label>
       <div class="pw-chip pw-online" title="Players online now"><i></i><b class="pw-online-n">1</b> online</div>
       <div class="pw-chip pw-clock" title="World time"><span class="pw-clock-icon">☀️</span><b class="pw-clock-t">--</b></div>
-      <button class="pw-chip pw-wallet" data-sheet="wallet" title="Pludor Wallet"><span>💳</span><b class="pw-bal">--</b></button>
-      <button class="pw-chip pw-level" data-sheet="profile" title="Level & XP"><span class="pw-lvl">1</span><span class="pw-xpbar"><i></i></span></button>
+      <button class="pw-chip pw-wallet" data-sheet="wallet" title="Pludor Wallet"><span class="pw-coin">P</span><b class="pw-bal">--</b></button>
       <button class="pw-icon-btn pw-bell" data-sheet="notifications" title="Notifications">🔔<span class="pw-badge" hidden>0</span></button>
-      <button class="pw-avatar-btn" data-sheet="profile" title="Your profile"><span class="pw-av me"></span></button>
+      <button class="pw-me-btn" data-sheet="profile" title="Your profile"><span class="pw-av me"></span><span class="pw-me-txt"><b class="pw-me-name">--</b><small class="pw-me-lvl">Level 1</small></span><span class="pw-chev">⌄</span></button>
     </header>
-    <aside class="pw-minimap" title="Open map (M)"><canvas width="360" height="360"></canvas><div class="pw-zone">Central Plaza</div></aside>
+    <aside class="pw-minimap"><canvas width="360" height="360" title="Open map (M)"></canvas><span class="pw-north">N</span>
+      <div class="pw-map-btns"><button data-hud="recenter" title="Recenter">◎</button><button data-hud="zoom" data-arg="1" title="Zoom in">+</button><button data-hud="zoom" data-arg="-1" title="Zoom out">−</button></div>
+      <div class="pw-zone"><b>Nova City</b><small class="pw-zone-name">Central Plaza</small></div></aside>
     <section class="pw-player">
-      <div class="pw-player-head"><span class="pw-av lg me"></span><div><div class="pw-name">--</div><div class="pw-rank">Visitor</div></div></div>
+      <div class="pw-player-head"><span class="pw-av lg me"></span><div class="pw-player-id"><div class="pw-name">--</div><div class="pw-rank">Visitor</div>
+        <div class="pw-xprow"><i class="pw-xpfill"><b></b></i><small class="pw-xptext">0 XP</small></div></div></div>
       <div class="pw-needs"></div>
+      <div class="pw-quick">
+        <button data-hud="home"><span>🏠</span>Home</button>
+        <button data-sheet="shops"><span>🏪</span>Businesses</button>
+        <button data-sheet="land"><span>📍</span>Land</button>
+        <button data-sheet="wallet"><span>👛</span>Wallet<em class="pw-quick-bal"></em></button>
+        <button data-sheet="inventory"><span>🎒</span>Inventory</button>
+        <button data-sheet="social"><span>👥</span>Friends</button>
+        <button data-sheet="profile"><span>🏆</span>Achievements</button>
+        <button data-sheet="settings"><span>⚙️</span>Settings</button>
+      </div>
     </section>
     <aside class="pw-right">
-      <section class="pw-card pw-nearby"><header><b>Nearby</b><span class="pw-count">0</span></header><ul></ul></section>
+      <section class="pw-card pw-nearby"><header><b>Nearby Players</b><span class="pw-count">0</span></header><ul></ul></section>
       <section class="pw-card pw-quest"></section>
       <section class="pw-card pw-live" hidden></section>
+      <section class="pw-card pw-biz" hidden></section>
     </aside>
     <div class="pw-prompt" hidden></div>
     <div class="pw-navpill" hidden><span></span><button class="pw-link-btn" data-act="cancel-nav">Cancel</button></div>
@@ -61,9 +74,10 @@ export class Hud {
       ${f.WORLD_LAND_ENABLED ? '<button data-sheet="land"><span>🏗️</span>Land</button>' : ''}
       ${f.WORLD_GAMES_ENABLED ? '<button data-sheet="games"><span>🎮</span>Games</button>' : ''}
       <button data-sheet="social"><span>💬</span>Social</button>
-      <button data-sheet="learn"><span>🎓</span>Learn</button>
+      ${f.WORLD_AI_ENABLED ? '<button data-sheet="ai"><span>🤖</span>AI</button>' : ''}
     </nav>
-    ${f.WORLD_AI_ENABLED ? '<button class="pw-ai-fab" data-sheet="ai"><span class="pw-ai-orb"></span><span>Ask Pludor AI</span></button>' : ''}
+    ${f.WORLD_AI_ENABLED ? `<form class="pw-ai-box"><div class="pw-ai-head" data-sheet="ai"><span class="pw-ai-bot">🤖</span><b>Ask Pludor AI</b></div>
+      <div class="pw-ai-row"><input name="q" autocomplete="off" placeholder='Try: "Find me a shop for rent"' aria-label="Ask Pludor AI"><button aria-label="Send">➤</button></div></form>` : ''}
     <div class="pw-sheet" role="dialog" aria-modal="false"></div>
     <div class="pw-toasts" aria-live="polite"></div>
     <div class="pw-call" hidden></div>
@@ -84,7 +98,15 @@ export class Hud {
       if (a) this._hudAction(a.dataset.hud, a.dataset.arg ? JSON.parse(a.dataset.arg) : null);
       if (e.target.closest('[data-act="cancel-nav"]')) this.app.cancelNav();
     });
-    this.q('.pw-minimap').addEventListener('click', () => this.app.sheets.open('map'));
+    this.q('.pw-ai-box')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const inp = e.target.q;
+      const v = inp.value.trim();
+      this.app.sheets.open('ai', v ? { ask: v } : {});
+      inp.value = '';
+      inp.blur();
+    });
+    this.q('.pw-minimap canvas').addEventListener('click', () => this.app.sheets.open('map'));
     const search = this.q('.pw-search input');
     search.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && search.value.trim()) {
@@ -111,6 +133,29 @@ export class Hud {
       }
       case 'focus':
         return this.primaryAction(arg);
+      case 'zoom':
+        this.mapZoom = Math.max(1, Math.min(4, (this.mapZoom || 2) * (arg > 0 ? 1.5 : 1 / 1.5)));
+        return;
+      case 'ask':
+        return app.sheets.open('ai', { ask: `Tell me about ${arg}` });
+      case 'recenter':
+        this.mapZoom = 2;
+        return;
+      case 'follow':
+        return app.api.social.follow(arg).then((r) => {
+          this.showProgress(r);
+          this.toast(r.following ? 'Following' : 'Unfollowed', '➕');
+          this._followed = this._followed || new Set();
+          if (r.following) this._followed.add(arg);
+          else this._followed.delete(arg);
+          this._nearSig = null;
+        }).catch((e) => this.toast(e.message, '⚠️'));
+      case 'home': {
+        const home = app.state.parcels.find((p) => p.mine);
+        if (home) return app.navigateTo({ x: home.x, z: home.z - home.d / 2 - 2 }, home.building?.businessName || 'Home');
+        this.toast('You don’t have a home yet — rent a parcel in Riverside Lots', '🏠');
+        return app.sheets.open('land');
+      }
       default:
     }
   }
@@ -120,22 +165,32 @@ export class Hud {
     const s = this.app.state;
     if (!s.profile) return;
     const sym = s.wallet?.symbol || '$';
-    this.q('.pw-bal').textContent = money(s.wallet?.balance ?? 0, sym);
+    const bal = money(s.wallet?.balance ?? 0, sym);
+    this.q('.pw-bal').textContent = bal;
+    const qb = this.q('.pw-quick-bal');
+    if (qb) qb.textContent = bal;
     const lvl = s.progress.level;
-    this.q('.pw-lvl').textContent = lvl.level;
-    this.q('.pw-xpbar i').style.width = `${Math.round(lvl.progress * 100)}%`;
-    this.q('.pw-level').title = `Level ${lvl.level} · ${s.progress.xp} XP (${lvl.next - s.progress.xp} to next)`;
+    this.q('.pw-me-name').textContent = s.profile.displayName;
+    this.q('.pw-me-lvl').textContent = `Level ${lvl.level}`;
+    this.q('.pw-xpfill b').style.width = `${Math.round(lvl.progress * 100)}%`;
+    this.q('.pw-xptext').textContent = `${s.progress.xp.toLocaleString()} XP`;
+    const portrait = this.app.portrait?.(this.app.player.userData.person);
     for (const av of this.root.querySelectorAll('.pw-av.me')) {
       av.style.background = s.profile.color;
-      av.textContent = s.profile.displayName[0]?.toUpperCase() || 'P';
+      if (portrait) {
+        av.style.backgroundImage = `url(${portrait})`;
+        av.classList.add('pic');
+        av.textContent = '';
+      } else av.textContent = s.profile.displayName[0]?.toUpperCase() || 'P';
     }
     this.q('.pw-name').textContent = s.profile.displayName;
-    this.q('.pw-rank').innerHTML = html`<span class="pw-rank-pill">${s.progress.rank.title}</span> <span class="pw-dot" style="background:${PRESENCE_COLORS[s.profile.presence] || '#36d399'}"></span> ${s.profile.presence}`.s;
+    this.q('.pw-rank').innerHTML = html`<span class="pw-rank-pill">Level ${lvl.level}</span> <span>${s.progress.rank.title}</span> <span class="pw-dot" style="background:${PRESENCE_COLORS[s.profile.presence] || '#36d399'}"></span>`.s;
     if (this.app.flags.WORLD_NEEDS_ENABLED) {
+      const icons = { energy: '⚡', hunger: '🍔', social: '💬', fun: '🎉', hygiene: '🚿' };
       this.q('.pw-needs').innerHTML = Object.entries(ECONOMY.needs)
         .map(([k, def]) => {
           const v = Math.round(s.needs[k] ?? def.start);
-          return html`<div class="pw-need ${v < 30 ? 'low' : ''}" title="${def.label} ${v}/100"><span>${def.label}</span><i><b style="width:${v}%;background:${def.color}"></b></i></div>`.s;
+          return html`<div class="pw-need ${v < 30 ? 'low' : ''}" title="${def.label} ${v}/100"><span>${icons[k] || '•'}</span><i><b style="width:${v}%;background:${def.color}"></b></i></div>`.s;
         })
         .join('');
     }
@@ -148,15 +203,17 @@ export class Hud {
     const quests = s.progress.quests.filter((q) => q.state?.active && !q.state?.done);
     const el = this.q('.pw-quest');
     if (!quests.length) {
-      el.innerHTML = html`<header><b>Quests</b></header><p class="pw-muted">All quests complete. Host an event or open a business to keep growing.</p>`.s;
+      el.innerHTML = html`<header><b>Active Quest</b></header><p class="pw-muted">All quests complete. Host an event or open a business to keep growing.</p>`.s;
       return;
     }
     const q = quests[0];
     const step = currentStep(q, q.state);
-    el.innerHTML = html`<header><b>${q.sponsor ? 'Sponsored quest' : 'Active quest'}</b><button class="pw-link-btn" data-hud="quest">All (${quests.length})</button></header>
-      <div class="pw-quest-title">${q.title}${q.sponsor ? html` <span class="pw-tag">by ${q.sponsor}</span>` : ''}</div>
-      <ul class="pw-steps">${q.steps.map((st, i) => html`<li class="${q.state.steps[i] >= st.count ? 'done' : i === step?.index ? 'cur' : ''}"><span></span>${st.label}${st.count > 1 ? html` <em>${Math.min(q.state.steps[i], st.count)}/${st.count}</em>` : ''}</li>`)}</ul>
-      <div class="pw-reward">Reward: <b>+${q.rewardXp} XP</b>${q.rewardCoupon ? html` · <b>${q.rewardCoupon.percentOff}% off</b> coupon` : ''}</div>`.s;
+    const done = q.steps.filter((st, i) => q.state.steps[i] >= st.count).length;
+    el.innerHTML = html`<header><b><span class="pw-qicon">P</span>${q.sponsor ? 'Sponsored Quest' : 'Active Quest'}</b><button class="pw-link-btn" data-hud="quest">All (${quests.length})</button></header>
+      <div class="pw-quest-title">${q.title}</div>
+      <p class="pw-quest-desc">${step ? step.step.label : q.desc}${step && step.step.count > 1 ? ` (${Math.min(step.have, step.step.count)}/${step.step.count})` : ''}</p>
+      <div class="pw-qbar"><i style="width:${Math.round((done / q.steps.length) * 100)}%"></i></div>
+      <div class="pw-qfoot"><span>${done}/${q.steps.length}</span><b class="pw-qreward">⭐ +${q.rewardXp} XP${q.rewardCoupon ? ` · ${q.rewardCoupon.percentOff}% off` : ''}</b></div>`.s;
   }
 
   _renderLive() {
@@ -175,16 +232,21 @@ export class Hud {
   setNearby(list) {
     this.q('.pw-count').textContent = list.length;
     const ul = this.q('.pw-nearby ul');
-    const sig = list.map((p) => `${p.id}:${Math.round(p.dist / 3)}:${p.presence}`).join('|');
+    const sig = list.map((p) => `${p.id}:${Math.round(p.dist / 3)}:${p.presence}:${this._followed?.has(p.id)}`).join('|');
     if (sig === this._nearSig) return;
     this._nearSig = sig;
     ul.innerHTML = list.length
-      ? list.slice(0, 5).map((p) => html`<li data-hud="open" data-arg='${esc(JSON.stringify({ type: 'player', id: p.id }))}'><span class="pw-av sm" style="background:${p.color}">${(p.displayName || "?")[0]}</span><div><b>@${p.name}</b><small><span class="pw-dot" style="background:${PRESENCE_COLORS[p.presence] || '#36d399'}"></span>${p.presence}</small></div><em>${Math.round(p.dist)}m</em></li>`.s).join('')
+      ? list.slice(0, 4).map((p) => {
+        const pic = this.app.portrait?.(this.app.personOf?.(p.id));
+        const following = this._followed?.has(p.id);
+        return html`<li><button class="pw-near-who" data-hud="open" data-arg='${esc(JSON.stringify({ type: 'player', id: p.id }))}'><span class="pw-av sm ${pic ? 'pic' : ''}" style="background-color:${p.color};${pic ? `background-image:url(${pic})` : ''}">${pic ? '' : (p.displayName || '?')[0]}</span><span class="pw-near-txt"><b>${p.displayName || p.name}</b><small>${Math.round(p.dist)}m · ${p.presence}</small></span></button>
+          <button class="pw-follow ${following ? 'on' : ''}" data-hud="follow" data-arg='${esc(JSON.stringify(p.id))}'>${following ? 'Following' : 'Follow'}</button></li>`.s;
+      }).join('')
       : '<li class="pw-muted">No one nearby. Head to the plaza to meet people.</li>';
   }
 
   setZone(name) {
-    this.q('.pw-zone').textContent = name;
+    this.q('.pw-zone-name').textContent = name;
     this.toast(name, '📍', 1400);
   }
 
@@ -547,16 +609,58 @@ export class Hud {
     if (!this._mmT || now - this._mmT > 120) {
       this._mmT = now;
       const c = this.q('.pw-minimap canvas');
-      this.drawMap(c.getContext('2d'), c.width);
+      const g = c.getContext('2d');
+      const z = this.mapZoom || 2;
+      const pp = this.app.player.position;
+      const { half } = this.mapBase;
+      const k = c.width / (half * 2);
+      g.save();
+      g.fillStyle = '#1b2a22';
+      g.fillRect(0, 0, c.width, c.height);
+      g.translate(c.width / 2, c.height / 2);
+      g.scale(z, z);
+      g.translate(-(pp.x + half) * k, -(pp.z + half) * k);
+      this.drawMap(g, c.width);
+      g.restore();
       const wt = this.app.worldTime();
       this.q('.pw-clock-t').textContent = `${formatClock(wt)} · Day ${wt.day}`;
       this.q('.pw-clock-icon').textContent = { dawn: '🌅', day: '☀️', dusk: '🌇', night: '🌙' }[wt.phase];
       this.app.sheets.tick?.();
+      this._renderBiz();
       const tr = this.app.transport;
       const n = tr?.online || (tr ? tr.peers().length + 1 : 1);
       this.q('.pw-online-n').textContent = n.toLocaleString();
     }
     this._plates();
+  }
+
+  // Contextual card for the closest business (like walking past a storefront).
+  _renderBiz() {
+    const now = performance.now();
+    if (this._bizT && now - this._bizT < 900) return;
+    this._bizT = now;
+    const pp = this.app.player.position;
+    const el = this.q('.pw-biz');
+    let best = null;
+    for (const p of PLACES) {
+      if (!['cafe', 'restaurant', 'store', 'service', 'market'].includes(p.kind)) continue;
+      const e = entrancePoint(p);
+      const d = Math.hypot(e.x - pp.x, e.z - pp.z);
+      if (d < 55 && (!best || d < best.d)) best = { p, d };
+    }
+    if (!best || this.app.sheets.top) {
+      el.hidden = true;
+      return;
+    }
+    const v = this.app.placeView(best.p);
+    if (this._bizId === best.p.id && !el.hidden) {
+      el.querySelector('.pw-biz-dist').textContent = `${Math.round(best.d)} m`;
+      return;
+    }
+    this._bizId = best.p.id;
+    el.hidden = false;
+    el.innerHTML = html`<div class="pw-biz-row"><div class="pw-biz-icon" style="--accent:${best.p.accent}">${KIND_ICON[best.p.kind]}</div><div class="pw-biz-txt"><b>${best.p.name}</b><small>${v.kindLabel} · <span class="pw-biz-dist">${Math.round(best.d)} m</span></small>${v.rating ? html`<small class="pw-stars">★ ${v.rating.toFixed(1)}</small>` : ''}</div></div>
+      <div class="pw-biz-acts"><button class="pw-btn sm" data-hud="go" data-arg='${esc(JSON.stringify({ ...entrancePoint(best.p), label: best.p.name }))}'>Visit</button><button class="pw-btn sm ghost" data-hud="open" data-arg='${esc(JSON.stringify({ type: 'place', id: best.p.id }))}'>${v.commerce ? 'Order' : 'Open'}</button><button class="pw-btn sm ghost" data-hud="ask" data-arg='${esc(JSON.stringify(best.p.name))}'>More</button></div>`.s;
   }
 
   _plate(id, cls, htmlStr) {

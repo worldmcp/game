@@ -55,7 +55,7 @@ export class WorldApp {
       onProgress(0.1, 'Loading people & vehicles');
       let n = 0;
       const tick = () => onProgress(0.1 + (++n / 3) * 0.25, 'Loading people & vehicles');
-      await Promise.all([initHumans(this.quality).then(tick), this._loadCar().then(tick), loadModel('plant').then(tick)]).catch((e) => console.warn('Realistic assets unavailable, using stylised fallback', e));
+      await Promise.all([initHumans(this.quality, [this.me.avatar || pickPerson([...this.me.id].reduce((a, c) => a + c.charCodeAt(0), 0)), ...AGENTS.map((a) => a.person), ...RESIDENTS.map((r) => r.person)]).then(tick), this._loadCar().then(tick), loadModel('plant').then(tick)]).catch((e) => console.warn('Realistic assets unavailable, using stylised fallback', e));
     }
     onProgress(0.4, `Building ${WORLD.name}`);
     await frame();
@@ -466,6 +466,7 @@ export class WorldApp {
       this.api.learning.listCourses(),
     ]);
     Object.assign(this.state, { profile, progress, wallet, needs, gigs, parcels, events, tokens, courses });
+    if (profile.avatar && profile.avatar !== this.player.userData.person) setPerson(this.player, profile.avatar);
     for (const p of parcels) this.city.setParcelState(p.id, p.building, p.rentLabel);
     this.hud.render();
     this.sheets.refresh();
