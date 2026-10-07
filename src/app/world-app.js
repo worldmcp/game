@@ -5,7 +5,7 @@
 
 import * as THREE from 'three';
 import { City } from '../render/city.js';
-import { createAvatar, animateAvatar, initHumans, recolorAvatar } from '../render/avatar.js';
+import { createAvatar, animateAvatar, initHumans, recolorAvatar, setPerson, pickPerson, portraitOf } from '../render/avatar.js';
 import { Environment, PostFX } from '../render/environment.js';
 import { loadModel, fitObject } from '../render/assets.js';
 import { PLACES, PARCELS, BILLBOARDS, AGENTS, TOKENS, PLAZA, DISTRICT, FILLER_CELLS, WORLD, cellBounds, entrancePoint, footprint, zoneAt, facingVector } from '../config/nova-city.js';
@@ -53,7 +53,7 @@ export class WorldApp {
       onProgress(0.1, 'Loading people & vehicles');
       let n = 0;
       const tick = () => onProgress(0.1 + (++n / 3) * 0.25, 'Loading people & vehicles');
-      await Promise.all([initHumans().then(tick), this._loadCar().then(tick), loadModel('plant').then(tick)]).catch((e) => console.warn('Realistic assets unavailable, using stylised fallback', e));
+      await Promise.all([initHumans(this.quality).then(tick), this._loadCar().then(tick), loadModel('plant').then(tick)]).catch((e) => console.warn('Realistic assets unavailable, using stylised fallback', e));
     }
     onProgress(0.4, `Building ${WORLD.name}`);
     await frame();
@@ -92,9 +92,10 @@ export class WorldApp {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog('#bcd7ea', 120, 420);
+    this.scene.fog = new THREE.Fog('#bcd7ea', this.quality === 'low' ? 120 : 260, this.quality === 'low' ? 420 : 1500);
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.3, 2000);
-    this.cam = { yaw: Math.PI * 0.85, pitch: 0.62, dist: 24, target: new THREE.Vector3() };
+    // Over-the-shoulder by default: low, behind the player, looking up the boulevard.
+    this.cam = { yaw: 0, pitch: 0.16, dist: 7.5, target: new THREE.Vector3(), lookUp: 1.3 };
     this.hemi = new THREE.HemisphereLight('#dfefff', '#4b5a3c', 0.9);
     this.sun = new THREE.DirectionalLight('#fff3dc', 2.2);
     this.sun.castShadow = true;
@@ -118,7 +119,7 @@ export class WorldApp {
       const h = this.root.clientHeight;
       this.renderer.setSize(w, h, false);
       this.camera.aspect = w / h;
-      this.camera.fov = w < 700 ? 62 : 50;
+      this.camera.fov = w < 700 ? 70 : 60;
       this.camera.updateProjectionMatrix();
       this.post?.setSize(w, h);
     };
@@ -133,9 +134,9 @@ export class WorldApp {
 
   _initPlayer() {
     const p = this.me;
-    this.player = createAvatar({ color: p.color, skin: p.skin, seed: [...p.id].reduce((a, c) => a + c.charCodeAt(0), 0), ring: '#ffffff', quality: this.quality });
+    this.player = createAvatar({ color: p.color, skin: p.skin, seed: [...p.id].reduce((a, c) => a + c.charCodeAt(0), 0), ring: p.color, quality: this.quality, person: p.avatar || pickPerson([...p.id].reduce((a, c) => a + c.charCodeAt(0), 0)) });
     this.player.position.set(DISTRICT.spawn.x, 0.2, DISTRICT.spawn.z);
-    this.player.rotation.y = Math.PI;
+    this.player.rotation.y = Math.PI; // face north, towards the plaza and Pludor Tower
     this.scene.add(this.player);
     this.vel = new THREE.Vector2();
     this.speed = 0;
@@ -170,9 +171,24 @@ export class WorldApp {
     recolorAvatar(this.player, color);
   }
 
+  setPlayerPerson(id) {
+    setPerson(this.player, id);
+  }
+
+  portrait(personId) {
+    return portraitOf(this.renderer, personId);
+  }
+
+  personOf(userId) {
+    if (userId === this.state.profile?.id) return this.player.userData.person;
+    const b = this.bots.get(userId);
+    if (b) return b.avatar.userData.person;
+    return this.peers.get(userId)?.avatar.userData.person || null;
+  }
+
   _initAgents() {
     this.agents = AGENTS.map((a, i) => {
-      const av = createAvatar({ color: a.color, skin: ['#c68642', '#8d5524', '#f1c27d', '#5c3a21', '#e0ac69'][i % 5], seed: i + 1, ring: a.color, quality: this.quality });
+      const av = createAvatar({ color: a.color, skin: ['#c68642', '#8d5524', '#f1c27d', '#5c3a21', '#e0ac69'][i % 5], seed: i + 1, ring: a.color, quality: this.quality, person: a.person });
       av.position.set(a.x, 0.2, a.z);
       this.scene.add(av);
       return { ...a, avatar: av };
@@ -181,7 +197,7 @@ export class WorldApp {
 
   _initAmbient() {
     // Pedestrians loop sidewalk rings; cars loop road rings.
-    const count = this.lowPower ? 14 : 26;
+    const count = this.lowPower ? 10 : 20;
     const shirt = ['#e76f51', '#2a9d8f', '#e9c46a', '#8ab17d', '#6d597a', '#457b9d', '#f4a261', '#b5838d'];
     const skins = ['#8d5524', '#c68642', '#e0ac69', '#f1c27d', '#5c3a21'];
     this.walkers = [];
@@ -192,10 +208,40 @@ export class WorldApp {
       const inset = 1.6;
       const ring = [[b.x0 + inset, b.z0 + inset], [b.x1 - inset, b.z0 + inset], [b.x1 - inset, b.z1 - inset], [b.x0 + inset, b.z1 - inset]];
       if (k % 2) ring.reverse();
-      const av = createAvatar({ color: shirt[k % shirt.length], skin: skins[k % skins.length], seed: k, scale: 0.96 + (k % 3) * 0.03, quality: this.quality });
+      const av = createAvatar({ color: shirt[k % shirt.length], skin: skins[k % skins.length], seed: k * 7 + 3, quality: this.quality });
       this.scene.add(av);
       this.walkers.push({ av, ring, seg: k % 4, t: (k * 0.37) % 1, speed: 1.15 + (k % 5) * 0.1 });
     }
+    // Plaza crowd: strollers looping around the fountain at varied radii.
+    const strollers = this.quality === 'low' ? 6 : this.lowPower ? 10 : 16;
+    for (let k = 0; k < strollers; k++) {
+      const r0 = 9 + (k % 5) * 3.2;
+      const n = 8;
+      const ring = [];
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + k * 0.4;
+        const r = r0 + Math.sin(i * 1.7 + k) * 1.5;
+        ring.push([Math.cos(a) * r, Math.sin(a) * r]);
+      }
+      if (k % 2) ring.reverse();
+      const av = createAvatar({ color: shirt[k % shirt.length], skin: skins[k % skins.length], seed: k * 13 + 5, quality: this.quality });
+      this.scene.add(av);
+      this.walkers.push({ av, ring, seg: k % n, t: (k * 0.29) % 1, speed: 1.1 + (k % 4) * 0.12 });
+    }
+    // People chatting in small groups near the terraces and the hub.
+    this.idlers = [];
+    const groups = [[-19, -6], [-19, 15], [17, 4], [6, -24], [-9, 22]];
+    groups.forEach(([gx, gz], gi) => {
+      const size = 2 + (gi % 2);
+      for (let i = 0; i < size; i++) {
+        const a = (i / size) * Math.PI * 2 + gi;
+        const av = createAvatar({ color: shirt[(gi + i) % shirt.length], skin: skins[i % skins.length], seed: gi * 31 + i * 7 + 11, quality: this.quality });
+        av.position.set(gx + Math.cos(a) * 0.8, 0.2, gz + Math.sin(a) * 0.8);
+        av.rotation.y = Math.atan2(gx - av.position.x, gz - av.position.z);
+        this.scene.add(av);
+        this.idlers.push({ av, emote: i === 0 ? 'talk' : null });
+      }
+    });
     const carGeo = { body: new THREE.BoxGeometry(2, 0.8, 4.2), cabin: new THREE.BoxGeometry(1.7, 0.7, 2.2), wheel: new THREE.CylinderGeometry(0.38, 0.38, 0.3, 12) };
     const carCols = ['#e63946', '#f1faee', '#1d3557', '#ffb703', '#2a9d8f', '#8338ec', '#fb5607', '#adb5bd'];
     const wheelMat = new THREE.MeshStandardMaterial({ color: '#1b1b1b' });
@@ -203,8 +249,8 @@ export class WorldApp {
     this.lightMat = new THREE.MeshStandardMaterial({ color: '#fff', emissive: '#fff2c4', emissiveIntensity: 0.2 });
     this.carLights = new Set([this.lightMat]);
     this.cars = [];
-    const loops = [-75, -25];
-    const nCars = this.lowPower ? 6 : 12;
+    const loops = [-75, -75]; // inner ring is pedestrianised around the plaza
+    const nCars = this.lowPower ? 5 : 8;
     for (let k = 0; k < nCars; k++) {
       const R = Math.abs(loops[k % 2]);
       const cw = k % 4 < 2;
@@ -290,7 +336,7 @@ export class WorldApp {
       if (Math.hypot(dx, dy) > 6) drag.moved = true;
       if (drag.moved) {
         this.cam.yaw = drag.yaw - dx * 0.006;
-        this.cam.pitch = Math.max(0.22, Math.min(1.3, drag.pitch + dy * 0.004));
+        this.cam.pitch = Math.max(0.04, Math.min(1.3, drag.pitch + dy * 0.004));
       }
     });
     addEventListener('pointerup', (e) => {
@@ -299,7 +345,7 @@ export class WorldApp {
     });
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      this.cam.dist = Math.max(8, Math.min(70, this.cam.dist * (1 + Math.sign(e.deltaY) * 0.1)));
+      this.cam.dist = Math.max(3.5, Math.min(70, this.cam.dist * (1 + Math.sign(e.deltaY) * 0.1)));
     }, { passive: false });
     // Pinch zoom
     const touches = new Map();
@@ -315,7 +361,7 @@ export class WorldApp {
       if (this.pinch && touches.size === 2) {
         const [a, b] = [...touches.values()];
         const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-        this.cam.dist = Math.max(8, Math.min(70, (this.pinch.dist * this.pinch.d) / d));
+        this.cam.dist = Math.max(3.5, Math.min(70, (this.pinch.dist * this.pinch.d) / d));
       }
     }, { passive: true });
     const endTouch = (e) => {
@@ -350,7 +396,7 @@ export class WorldApp {
     // Demo residents: always-on players so a single tab still feels alive.
     RESIDENTS.forEach((r, i) => {
       const a = BOT_ANCHORS[r.walk] || BOT_ANCHORS.plaza;
-      const av = createAvatar({ color: r.color, skin: r.skin, seed: i + 2, quality: this.quality });
+      const av = createAvatar({ color: r.color, skin: r.skin, seed: i + 2, quality: this.quality, person: r.person });
       av.position.set(a.x + (i % 3) - 1, 0.2, a.z + 1);
       av.userData.personRef = { type: 'player', id: r.id };
       this.scene.add(av);
@@ -358,6 +404,7 @@ export class WorldApp {
     });
     if (!this.transport) return;
     this.transport.onPeers(() => this._syncPeers());
+    setInterval(() => this._syncPeers(), 1500);
     this.transport.hello();
     setInterval(() => this._publish(), 100);
   }
@@ -366,7 +413,7 @@ export class WorldApp {
     const p = this.player.position;
     const prof = this.state.profile || {};
     this.transport.publishState({
-      profile: { handle: prof.handle, displayName: prof.displayName, color: prof.color, skin: this.me.skin, presence: prof.presence, roles: prof.roles, bio: prof.bio },
+      profile: { handle: prof.handle, displayName: prof.displayName, color: prof.color, skin: this.me.skin, presence: prof.presence, roles: prof.roles, bio: prof.bio, avatar: this.player.userData.person },
       x: +p.x.toFixed(2), z: +p.z.toFixed(2), ry: +this.player.rotation.y.toFixed(2), moving: this.speed > 0.1, emote: this.emote,
     });
   }
@@ -376,8 +423,9 @@ export class WorldApp {
     for (const peer of this.transport.peers()) {
       live.add(peer.id);
       let entry = this.peers.get(peer.id);
+      if (entry && peer.avatar && entry.avatar.userData.person !== peer.avatar) setPerson(entry.avatar, peer.avatar);
       if (!entry) {
-        const av = createAvatar({ color: peer.color, skin: peer.skin, seed: [...peer.id].reduce((a, c) => a + c.charCodeAt(0), 0), quality: this.quality });
+        const av = createAvatar({ color: peer.color, skin: peer.skin, seed: [...peer.id].reduce((a, c) => a + c.charCodeAt(0), 0), quality: this.quality, person: peer.avatar || pickPerson([...peer.id].reduce((a, c) => a + c.charCodeAt(0), 0)) });
         av.position.set(peer.x, 0.2, peer.z);
         av.userData.personRef = { type: 'player', id: peer.id };
         this.scene.add(av);
@@ -755,7 +803,7 @@ export class WorldApp {
           b.avatar.rotation.y = Math.atan2(dx, dz);
         }
       }
-      animateAvatar(b.avatar, t, b.speed / 6, b.emote);
+      animateAvatar(b.avatar, t, b.speed / 6, b.emote || (b.talking ? 'talk' : null));
     }
   }
 
@@ -779,8 +827,26 @@ export class WorldApp {
         w.av.position.set(x, 0.2, z);
         w.av.rotation.y = ry;
       });
-      w.av.visible = Math.abs(w.av.position.x - ppos.x) < 120 && Math.abs(w.av.position.z - ppos.z) < 120;
+      w.av.visible = Math.hypot(w.av.position.x - ppos.x, w.av.position.z - ppos.z) < 70;
       if (w.av.visible) animateAvatar(w.av, t, w.speed / 6);
+    }
+    // Only people near the camera cast shadows (big draw-call saving).
+    if (!this._shadowT || t - this._shadowT > 0.5) {
+      this._shadowT = t;
+      const cp = this.camera.position;
+      const all = [...this.walkers.map((x) => x.av), ...this.idlers.map((x) => x.av), ...[...this.bots.values()].map((b) => b.avatar)];
+      for (const av of all) {
+        const near = Math.hypot(av.position.x - cp.x, av.position.z - cp.z) < 38;
+        if (av.userData.castsShadow !== near) {
+          av.userData.castsShadow = near;
+          av.traverse((o) => o.isMesh && (o.castShadow = near));
+        }
+      }
+    }
+    for (const it of this.idlers) {
+      const d = Math.hypot(it.av.position.x - ppos.x, it.av.position.z - ppos.z);
+      it.av.visible = d < 70;
+      if (it.av.visible) animateAvatar(it.av, t, 0, it.emote);
     }
     for (const c of this.cars) {
       // Yield to the player if they're in the lane ahead.
@@ -905,9 +971,22 @@ export class WorldApp {
     const c = this.cam;
     const k = Math.min(1, dt * 6);
     c.target.lerp(new THREE.Vector3(this.player.position.x, 1.6, this.player.position.z), k);
-    const off = new THREE.Vector3(Math.sin(c.yaw) * Math.cos(c.pitch), Math.sin(c.pitch), Math.cos(c.yaw) * Math.cos(c.pitch)).multiplyScalar(c.dist);
-    this.camera.position.copy(c.target).add(off);
-    this.camera.lookAt(c.target);
+    const dir = new THREE.Vector3(Math.sin(c.yaw) * Math.cos(c.pitch), Math.sin(c.pitch), Math.cos(c.yaw) * Math.cos(c.pitch));
+    // Pull the camera in front of any building between it and the player.
+    let dist = c.dist;
+    for (let s = 0.5; s <= c.dist; s += 0.5) {
+      const p = c.target.clone().addScaledVector(dir, s);
+      if (this.city.colliders.some((b) => !b.round && b.x1 - b.x0 < 400 && p.x > b.x0 - 0.3 && p.x < b.x1 + 0.3 && p.z > b.z0 - 0.3 && p.z < b.z1 + 0.3)) {
+        dist = Math.max(1.5, s - 0.6);
+        break;
+      }
+    }
+    c.curDist = c.curDist === undefined ? dist : c.curDist + (dist - c.curDist) * Math.min(1, dt * (dist < c.curDist ? 14 : 3));
+    this.camera.position.copy(c.target).addScaledVector(dir, c.curDist);
+    if (this.camera.position.y < 0.6) this.camera.position.y = 0.6;
+    // Look slightly above the player so the skyline fills the frame when close.
+    const lift = c.lookUp * Math.max(0, 1 - c.pitch / 0.7) * Math.min(1, c.curDist / 7);
+    this.camera.lookAt(c.target.x, c.target.y + lift, c.target.z);
     // Shadow frustum follows the player.
     this.sun.target.position.copy(c.target);
     this.sun.position.copy(c.target).add(this._sunDir || new THREE.Vector3(60, 90, 40));
@@ -923,15 +1002,15 @@ export class WorldApp {
       const { sunDir, elevation } = this.env.update(t.hoursF, d, dt);
       const up = elevation > 2;
       this._sunDir = up ? sunDir.clone().multiplyScalar(140) : new THREE.Vector3(-50, 110, -40);
-      const fog = new THREE.Color('#0c1426').lerp(new THREE.Color('#c6d9e8'), d);
-      fog.lerp(new THREE.Color('#f0a878'), Math.min(0.45, duskAmt * 0.45));
+      const fog = new THREE.Color('#0c1426').lerp(new THREE.Color('#a8c4dd'), d);
+      fog.lerp(new THREE.Color('#e7a77c'), Math.min(0.45, duskAmt * 0.45));
       this.scene.fog.color.copy(fog);
       this.scene.background = null;
-      this.hemi.intensity = 0.12 + d * 0.45;
+      this.hemi.intensity = 0.15 + d * 0.55;
       this.hemi.color.set(d > 0.2 ? '#dfefff' : '#6f86c6');
-      this.sun.intensity = up ? 0.4 + d * 2.6 : 0.35;
+      this.sun.intensity = up ? 0.6 + d * 3.4 : 0.35;
       this.sun.color.set(up ? (duskAmt > 0.25 ? '#ffc08a' : '#fff4e2') : '#8fa6e6');
-      this.renderer.toneMappingExposure = 0.55 + d * 0.35;
+      this.renderer.toneMappingExposure = 0.42 + d * 0.2;
     } else if (this._lastSkyH !== t.hoursF.toFixed(2)) {
       this._lastSkyH = t.hoursF.toFixed(2);
       const sky = new THREE.Color('#0d1530').lerp(new THREE.Color('#9fd0f0'), d);

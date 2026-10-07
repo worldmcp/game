@@ -373,7 +373,7 @@ export class DemoPludorAdapter {
       }),
       getUser: T((id) => A._userSummary(id)),
       updateProfile: T((patch) => {
-        const allowed = ['displayName', 'color', 'presence', 'bio', 'allowMessages', 'allowCalls'];
+        const allowed = ['displayName', 'color', 'presence', 'bio', 'allowMessages', 'allowCalls', 'avatar'];
         const PRESENCE = ['Online', 'Away', 'Busy', 'Working', 'Shopping', 'Playing', 'Learning', 'Available for Work', 'Hiring', 'In Conversation', 'At Event', 'Invisible'];
         A._mutate((st) => {
           for (const k of allowed) {
@@ -384,6 +384,7 @@ export class DemoPludorAdapter {
             if (k === 'presence' && !PRESENCE.includes(v)) continue;
             if ((k === 'allowMessages' || k === 'allowCalls') && !['everyone', 'friends', 'nobody'].includes(v)) continue;
             if (k === 'bio') v = v.slice(0, 140);
+            if (k === 'avatar' && !/^[a-z0-9_]{3,40}$/.test(v)) continue;
             st.profile[k] = v;
           }
         });

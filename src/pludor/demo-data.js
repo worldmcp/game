@@ -17,12 +17,12 @@ export const SKILLS = {
 export const STARTING_SKILLS = { communication: 1, driving: 1 };
 
 export const RESIDENTS = [
-  { id: 'u_maya', handle: 'maya', displayName: 'Maya', color: '#ff8a5b', skin: '#8d5524', presence: 'Available for Work', roles: ['Creator', 'Photographer'], bio: 'UGC creator · product photos · 4.9★ on 38 gigs', skills: { photography: 4, video: 3 }, walk: 'plaza' },
-  { id: 'u_jay', handle: 'jay', displayName: 'Jay', color: '#8f7ce0', skin: '#c68642', presence: 'Hiring', roles: ['Agency Owner'], bio: 'Runs a small creator agency. Always hiring editors.', skills: { marketing: 4, video: 2 }, walk: 'creator' },
-  { id: 'u_ayo', handle: 'ayo', displayName: 'Ayo', color: '#36d399', skin: '#5c3a21', presence: 'Shopping', roles: ['Buyer', 'Gamer'], bio: 'Arcade regular. Sneakerhead.', skills: {}, walk: 'market' },
-  { id: 'u_marcus', handle: 'marcus', displayName: 'Marcus', color: '#ff5c5c', skin: '#3b2219', presence: 'Working', roles: ['Business Owner'], bio: 'Owner, Ember Grill. Looking for a video creator.', skills: { sales: 3 }, walk: 'grill', owns: 'biz_ember_grill' },
-  { id: 'u_lena', handle: 'lena', displayName: 'Lena', color: '#ffd166', skin: '#f1c27d', presence: 'Working', roles: ['Business Owner'], bio: 'Owner, Daily Grind café.', skills: { 'customer-service': 4 }, walk: 'grind', owns: 'biz_daily_grind' },
-  { id: 'u_kemi', handle: 'kemi', displayName: 'Kemi', color: '#ffb703', skin: '#a0663b', presence: 'Online', roles: ['Merchant', 'Advertiser'], bio: 'Founder, Kicks & Co.', skills: { sales: 4, marketing: 3 }, walk: 'kicks', owns: 'biz_kicks_co' },
+  { id: 'u_maya', handle: 'maya', displayName: 'Maya', color: '#ff8a5b', skin: '#8d5524', presence: 'Available for Work', roles: ['Creator', 'Photographer'], bio: 'UGC creator · product photos · 4.9★ on 38 gigs', skills: { photography: 4, video: 3 }, walk: 'plaza', person: 'female_adult_05' },
+  { id: 'u_jay', handle: 'jay', displayName: 'Jay', color: '#8f7ce0', skin: '#c68642', presence: 'Hiring', roles: ['Agency Owner'], bio: 'Runs a small creator agency. Always hiring editors.', skills: { marketing: 4, video: 2 }, walk: 'creator', person: 'male_adult_04' },
+  { id: 'u_ayo', handle: 'ayo', displayName: 'Ayo', color: '#36d399', skin: '#5c3a21', presence: 'Shopping', roles: ['Buyer', 'Gamer'], bio: 'Arcade regular. Sneakerhead.', skills: {}, walk: 'market', person: 'male_adult_11' },
+  { id: 'u_marcus', handle: 'marcus', displayName: 'Marcus', color: '#ff5c5c', skin: '#3b2219', presence: 'Working', roles: ['Business Owner'], bio: 'Owner, Ember Grill. Looking for a video creator.', skills: { sales: 3 }, walk: 'grill', owns: 'biz_ember_grill', person: 'male_adult_15' },
+  { id: 'u_lena', handle: 'lena', displayName: 'Lena', color: '#ffd166', skin: '#f1c27d', presence: 'Working', roles: ['Business Owner'], bio: 'Owner, Daily Grind café.', skills: { 'customer-service': 4 }, walk: 'grind', owns: 'biz_daily_grind', person: 'chef_female_01' },
+  { id: 'u_kemi', handle: 'kemi', displayName: 'Kemi', color: '#ffb703', skin: '#a0663b', presence: 'Online', roles: ['Merchant', 'Advertiser'], bio: 'Founder, Kicks & Co.', skills: { sales: 4, marketing: 3 }, walk: 'kicks', owns: 'biz_kicks_co', person: 'female_adult_15' },
 ];
 
 export const BOT_REPLIES = {

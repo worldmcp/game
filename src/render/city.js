@@ -6,6 +6,11 @@ import * as THREE from 'three';
 import { DISTRICT, cellBounds, footprint, facingVector } from '../config/nova-city.js';
 import { facadeTextures, facadePBR, asphaltPBR, paversPBR, grassPBR, leafCardTexture, signTexture, tileTexture, screenTexture, drawCinemaFrame, adTexture, shade } from './textures.js';
 import { productInstance } from './assets.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { addPalms, addTerrace, FountainSpray, createAirship, createLandmarkTower, createSkyline, LedScreen } from './props.js';
+
+// Inner roads are pedestrianised inside this half-size around the plaza.
+const PROMENADE = 30;
 
 const FACING_ROT = { s: 0, n: Math.PI, e: Math.PI / 2, w: -Math.PI / 2 };
 const box = new THREE.BoxGeometry(1, 1, 1);
@@ -14,6 +19,50 @@ const plane = new THREE.PlaneGeometry(1, 1);
 function rand(seed) {
   let s = seed >>> 0 || 1;
   return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+}
+
+// Merge a group's static meshes that share a material into one mesh each.
+// Cuts draw calls by an order of magnitude; picking still works because the
+// merged meshes stay under the group that carries userData.ref.
+export function batchStatic(group, { shallow = false } = {}) {
+  group.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(group.matrixWorld).invert();
+  const buckets = new Map();
+  const visit = (o, depth) => {
+    for (const ch of [...o.children]) {
+      if (ch.userData.dynamic || ch.userData.ref || ch.userData.product) {
+        if (ch !== group && (ch.userData.ref || ch.userData.product || ch.userData.dynamic)) continue;
+      }
+      if (ch.isMesh && !ch.isInstancedMesh && !ch.isSkinnedMesh && !Array.isArray(ch.material) && ch.geometry.index && !ch.material.transparent) {
+        const key = ch.material.uuid + (ch.castShadow ? 's' : '');
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key).push(ch);
+      } else if (!shallow && ch.isGroup && depth < 6) visit(ch, depth + 1);
+    }
+  };
+  visit(group, 0);
+  for (const meshes of buckets.values()) {
+    if (meshes.length < 2) continue;
+    const geos = [];
+    for (const m of meshes) {
+      const g = m.geometry.clone();
+      for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+      if (!g.attributes.uv || !g.attributes.normal) {
+        geos.length = 0;
+        break;
+      }
+      g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld));
+      geos.push(g);
+    }
+    if (!geos.length) continue;
+    const merged = mergeGeometries(geos, false);
+    if (!merged) continue;
+    const mesh = new THREE.Mesh(merged, meshes[0].material);
+    mesh.castShadow = meshes[0].castShadow;
+    mesh.receiveShadow = true;
+    for (const m of meshes) m.parent.remove(m);
+    group.add(mesh);
+  }
 }
 
 export class City {
@@ -33,8 +82,9 @@ export class City {
     this.parcelGroups = new Map();
     this.placeGroups = new Map();
     this.screens = [];
+    this.leds = [];
     this.animated = [];
-    const pav = paversPBR('#c7c3bb');
+    const pav = paversPBR('#b4ada2');
     this.mats = {
       sidewalk: this.pbr ? new THREE.MeshStandardMaterial({ map: pav.map, normalMap: pav.normalMap, roughness: 0.9 }) : new THREE.MeshStandardMaterial({ map: tileTexture('#c9cfd4', '#bfc6cc', 4), roughness: 0.95 }),
       curb: new THREE.MeshStandardMaterial({ color: '#9aa3ab', roughness: 0.9 }),
@@ -50,10 +100,24 @@ export class City {
     this._plaza();
     for (const p of cfg.places) this._place(p);
     for (const p of cfg.parcels) this._parcel(p);
+    if (this.pbr) this._dressing();
     for (const b of cfg.billboards) this._billboard(b);
     for (const c of cfg.filler) this._filler(c);
     this._streetFurniture();
-    this._skyline();
+    for (const g of this.placeGroups.values()) batchStatic(g);
+    batchStatic(this.root);
+    if (this.pbr) {
+      this.tower = createLandmarkTower();
+      this.tower.position.set(0, 0, -430);
+      this.tower.scale.setScalar(1.35);
+      this.root.add(this.tower);
+      this.skyline = createSkyline(5, { avoid: [[0, -430, 70]] });
+      this.root.add(this.skyline);
+      this.airship = createAirship();
+      this.airship.userData.dynamic = true;
+      this.airship.position.set(0, 80, -60);
+      this.root.add(this.airship);
+    } else this._skyline();
     this._river();
   }
 
@@ -86,18 +150,22 @@ export class City {
     const mz = mk(roadWidth / 6, len / 6);
     const mx = mk(len / 6, roadWidth / 6);
     const plain = mk(roadWidth / 6, roadWidth / 6);
+    // Segments along a road; inner roads stop at the pedestrian promenade.
+    const segs = (r) => (Math.abs(r) < PROMENADE ? [[-(len / 2 + PROMENADE) / 2, len / 2 - PROMENADE], [(len / 2 + PROMENADE) / 2, len / 2 - PROMENADE]] : [[0, len]]);
     for (const r of roads) {
-      const za = new THREE.Mesh(plane, mz);
-      za.scale.set(roadWidth, len, 1);
-      za.rotation.x = -Math.PI / 2;
-      za.position.set(r, 0.01, 0);
-      za.receiveShadow = true;
-      const xb = new THREE.Mesh(plane, mx);
-      xb.scale.set(len, roadWidth, 1);
-      xb.rotation.x = -Math.PI / 2;
-      xb.position.set(0, 0.012, r);
-      xb.receiveShadow = true;
-      this.root.add(za, xb);
+      for (const [c, l] of segs(r)) {
+        const za = new THREE.Mesh(plane, mz);
+        za.scale.set(roadWidth, l, 1);
+        za.rotation.x = -Math.PI / 2;
+        za.position.set(r, 0.01, c);
+        za.receiveShadow = true;
+        const xb = new THREE.Mesh(plane, mx);
+        xb.scale.set(l, roadWidth, 1);
+        xb.rotation.x = -Math.PI / 2;
+        xb.position.set(c, 0.012, r);
+        xb.receiveShadow = true;
+        this.root.add(za, xb);
+      }
     }
     // Lane markings: dashed centre line + solid edge lines, instanced.
     const dashes = [];
@@ -105,9 +173,11 @@ export class City {
     for (const r of roads) {
       for (let t = -half - 10; t < half + 10; t += 6) {
         if (roads.some((q) => Math.abs(t + 1.5 - q) < roadWidth / 2 + 1.5)) continue;
+        if (Math.abs(r) < PROMENADE && Math.abs(t + 1.5) < PROMENADE + 2) continue;
         dashes.push([r, t + 1.5, 0], [t + 1.5, r, 1]);
       }
-      for (const off of [-roadWidth / 2 + 0.35, roadWidth / 2 - 0.35]) edges.push([r + off, 0, 0], [0, r + off, 1]);
+      for (const off of [-roadWidth / 2 + 0.35, roadWidth / 2 - 0.35])
+        for (const [c, l] of segs(r)) edges.push([r + off, c, 0, l], [c, r + off, 1, l]);
     }
     const yellow = new THREE.MeshStandardMaterial({ color: '#e8c547', roughness: 0.6 });
     const white = new THREE.MeshStandardMaterial({ color: '#e9edf0', roughness: 0.6 });
@@ -117,13 +187,14 @@ export class City {
     const qx = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
     const qz = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, Math.PI / 2));
     dashes.forEach(([x, z, rot], i) => dm.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 0.022, z), rot ? qz : qx, new THREE.Vector3(0.22, 3, 1))));
-    edges.forEach(([x, z, rot], i) => em.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 0.021, z), rot ? qz : qx, new THREE.Vector3(0.15, len, 1))));
+    edges.forEach(([x, z, rot, l], i) => em.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 0.021, z), rot ? qz : qx, new THREE.Vector3(0.15, l, 1))));
     dm.receiveShadow = em.receiveShadow = true;
     this.root.add(dm, em);
     // Intersections + crosswalks (instanced stripes).
     const stripes = [];
     for (const x of roads)
       for (const z of roads) {
+        if (Math.abs(x) < PROMENADE && Math.abs(z) < PROMENADE) continue;
         const s = new THREE.Mesh(plane, plain);
         s.scale.set(roadWidth, roadWidth, 1);
         s.rotation.x = -Math.PI / 2;
@@ -170,12 +241,12 @@ export class City {
   _plaza() {
     const p = this.cfg.plaza;
     const s = p.size;
-    const pz = paversPBR('#ddd5c6', 8);
+    const pz = paversPBR('#c2b49d', 8);
     const t = pz.map.clone();
     const tn = pz.normalMap.clone();
     t.needsUpdate = tn.needsUpdate = true;
-    t.repeat.set(s / 2.5, s / 2.5);
-    tn.repeat.set(s / 2.5, s / 2.5);
+    t.repeat.set(s / 3.5, s / 3.5);
+    tn.repeat.set(s / 3.5, s / 3.5);
     const base = new THREE.Mesh(box, new THREE.MeshStandardMaterial({ map: t, normalMap: tn, roughness: 0.85 }));
     base.scale.set(s, 0.2, s);
     base.position.y = 0.1;
@@ -203,6 +274,7 @@ export class City {
     const ring2 = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.12, 12, 48), new THREE.MeshStandardMaterial({ color: '#5ce1e6', emissive: '#22d3ee', emissiveIntensity: 1.2 }));
     ring2.position.y = 6.2;
     f.add(rim, rimTop, water, col, bowl, ring, ring2);
+    if (this.pbr) this.spray = new FountainSpray(this.root, { x: p.fountain.x, z: p.fountain.z, y: 0.95, radius: p.fountain.r - 0.6 });
     f.children.forEach((c) => (c.castShadow = true));
     f.userData.ref = { type: 'plaza', id: p.id };
     this.pickables.push(f);
@@ -230,6 +302,54 @@ export class City {
       bench.rotation.y = -a + Math.PI / 2;
       this.root.add(bench);
     }
+  }
+
+  // Palms, café terraces and planters that make the promenade feel lived-in.
+  _dressing() {
+    const palms = [];
+    for (const v of [-24, -16, -8, 8, 16, 24]) {
+      palms.push([21.5, v], [-21.5, v], [v, 21.5], [v, -21.5]);
+    }
+    for (const v of [-60, -48, -36, 36, 48, 60]) palms.push([v, -31.2], [v, 31.2]);
+    const ok = palms.filter(([x, z]) => !this.cfg.billboards.some((b) => Math.hypot(b.x - x, b.z - z) < 4.5) && !(this.cfg.agents || []).some((a) => Math.hypot(a.x - x, a.z - z) < 3) && !this.cfg.places.some((p) => {
+      const f = footprint(p);
+      return x > f.x0 - 1 && x < f.x1 + 1 && z > f.z0 - 1 && z < f.z1 + 1;
+    }));
+    addPalms(this.root, ok, 3);
+    this.terraceSeats = [
+      ...addTerrace(this.root, { x: -25.5, z: -10.5, w: 6, d: 13, cols: 2, rows: 3, colors: ['#f4efe6', '#2f6e5a'] }),
+      ...addTerrace(this.root, { x: -25.5, z: 10.5, w: 6, d: 13, cols: 2, rows: 3, colors: ['#b5422c', '#f4efe6'] }),
+    ];
+    // Long planters with plants along the promenade edges.
+    const shrubs = [];
+    const planter = new THREE.MeshStandardMaterial({ color: '#d9d2c5', roughness: 0.85 });
+    const soil = new THREE.MeshStandardMaterial({ color: '#3b2e22', roughness: 1 });
+    for (const [x, z, rot] of [[25.5, -12, 0], [25.5, 12, 0], [-12, -25.5, 1], [12, -25.5, 1], [-12, 25.5, 1], [12, 25.5, 1]]) {
+      const pl = new THREE.Mesh(box, planter);
+      pl.scale.set(rot ? 8 : 1.4, 0.7, rot ? 1.4 : 8);
+      pl.position.set(x, 0.55, z);
+      pl.castShadow = pl.receiveShadow = true;
+      const so = new THREE.Mesh(box, soil);
+      so.scale.set(rot ? 7.6 : 1.1, 0.05, rot ? 1.1 : 7.6);
+      so.position.set(x, 0.92, z);
+      this.root.add(pl, so);
+      for (let k = -3; k <= 3; k++) shrubs.push([x + (rot ? k * 1.05 : 0), z + (rot ? 0 : k * 1.05)]);
+    }
+    // Instanced leafy shrubs: one draw call for every planter.
+    const shrubMat = new THREE.MeshStandardMaterial({ map: leafCardTexture(9), alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.85 });
+    const cards = new THREE.InstancedMesh(plane, shrubMat, shrubs.length * 4);
+    const m4 = new THREE.Matrix4();
+    let n = 0;
+    const R = rand(17);
+    for (const [x, z] of shrubs)
+      for (let c = 0; c < 4; c++) {
+        const q = new THREE.Quaternion().setFromEuler(new THREE.Euler((R() - 0.5) * 0.4, R() * Math.PI, 0));
+        const s = 1 + R() * 0.5;
+        m4.compose(new THREE.Vector3(x + (R() - 0.5) * 0.4, 1.45 + R() * 0.2, z + (R() - 0.5) * 0.4), q, new THREE.Vector3(s, s, s));
+        cards.setMatrixAt(n++, m4);
+      }
+    cards.castShadow = true;
+    this.root.add(cards);
   }
 
   _bench() {
@@ -370,7 +490,12 @@ export class City {
       pl.scale.set(0.9, 0.55, 0.9);
       pl.position.set(sx * (w * 0.43 - 0.6), 0.28, d / 2 + 0.9);
       g.add(pl);
-      if (this.pbr) this._placeModel(g, 'plant', 1.2, pl.position.x, 0.55, pl.position.z);
+      if (this.pbr) {
+        const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(0.55, 1), new THREE.MeshStandardMaterial({ color: '#3f7a3a', roughness: 0.9, flatShading: true }));
+        bush.position.set(pl.position.x, 0.95, pl.position.z);
+        bush.castShadow = true;
+        g.add(bush);
+      }
     }
     if (p.display) this._displayProducts(g, p.display, w, d - inset / 2);
     if (p.rooftop && this.pbr) this._rooftopModel(g, p.rooftop, h);
@@ -476,6 +601,16 @@ export class City {
       g.add(post);
     }
     g.add(body, curtain, band, sign, canopy, this._roofCap(w, d, h, color));
+    if (this.pbr && p.led) {
+      const led = new LedScreen(w * 0.24, h * 0.55, p.led);
+      led.mesh.position.set(-w * 0.37, h * 0.42, d / 2 + 0.35);
+      g.add(led.mesh);
+      this.leds.push(led);
+      const frame = new THREE.Mesh(box, this.mats.dark);
+      frame.scale.set(w * 0.24 + 0.4, h * 0.55 + 0.4, 0.3);
+      frame.position.set(-w * 0.37, h * 0.42, d / 2 + 0.18);
+      g.add(frame);
+    }
     return g;
   }
 
@@ -826,7 +961,7 @@ export class City {
             const corner = (k === 0 || k === n);
             if (corner) {
               if (!lamps.some((l) => Math.hypot(l[0] - x, l[1] - z) < 2)) lamps.push([x, z]);
-            } else if (!this._blocked(x, z, 0.6) && !(i === 0 && j === 0 && Math.hypot(x, z) < 14)) trees.push([x, z]);
+            } else if (!this._blocked(x, z, 0.6) && !(i === 0 && j === 0)) trees.push([x, z]);
           }
         }
       }
@@ -928,6 +1063,18 @@ export class City {
   // ───────── per-frame ─────────
   update(time, daylight, reel) {
     const night = 1 - daylight;
+    this.spray?.update(time);
+    for (const l of this.leds) l.update(time);
+    if (this.airship) {
+      const a = time * 0.025;
+      this.airship.position.set(Math.cos(a) * 150, 78 + Math.sin(time * 0.2) * 2, Math.sin(a) * 150 - 40);
+      this.airship.rotation.y = -a;
+    }
+    if (this.tower) {
+      for (const m of this.tower.userData.mats) m.emissiveIntensity = night * 1.1;
+      this.tower.userData.beacon.visible = Math.sin(time * 3) > 0;
+    }
+    if (this.skyline) for (const m of this.skyline.userData.mats) m.emissiveIntensity = night * 1.0;
     for (const m of this.windowMats) m.emissiveIntensity = night * 1.05;
     for (const { mat, day, night: n } of this.nightMats) mat.emissiveIntensity = day + (n - day) * night;
     if (this.skylineMat) this.skylineMat.color.setHSL(0.6, 0.15, 0.22 + daylight * 0.25);

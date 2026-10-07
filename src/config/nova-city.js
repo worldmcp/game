@@ -14,7 +14,7 @@ export const DISTRICT = {
   roadWidth: 10,
   // Cell edges between roads; cell index -2..2 on each axis.
   edges: [-110, -80, -70, -30, -20, 20, 30, 70, 80, 110],
-  spawn: { x: 0, z: 9 },
+  spawn: { x: 0, z: 25 },
 };
 
 export function cellBounds(ix, iz) {
@@ -53,12 +53,14 @@ export const PLACES = [
     x: 0, z: -50, w: 34, d: 28, h: 18, facing: 's', color: '#4b3f72', accent: '#b794ff',
     tags: ['creator', 'ugc', 'work', 'gigs', 'jobs', 'affiliate', 'campaigns', 'hiring'],
     link: { type: 'creator_hub', id: 'creator_hub' },
+    led: [{ lines: ['SHOP.', 'PLAY.', 'CONNECT.', 'EARN.'], tag: 'P  PLUDOR', bg: ['#1e3cff', '#00c2ff'] }, { lines: ['CREATORS', 'WANTED'], tag: 'UGC gigs from 35', bg: ['#7f00ff', '#e100ff'] }]
   },
   {
     id: 'signals-hall', name: 'Signals Hall', kind: 'community', template: 'hall',
     x: 0, z: 50, w: 34, d: 26, h: 14, facing: 'n', color: '#24506b', accent: '#5ce1e6',
     tags: ['community', 'signals', 'social', 'club', 'people', 'meet'],
     link: { type: 'signals', id: 'signals_directory' }, activity: 'socialize',
+    led: [{ lines: ['FIND', 'YOUR', 'PEOPLE'], tag: 'Signals communities', bg: ['#0f766e', '#22d3ee'] }],
   },
   {
     id: 'academy', name: 'Pludor Academy', kind: 'education', template: 'tower',
@@ -77,6 +79,7 @@ export const PLACES = [
     x: 50, z: 50, w: 32, d: 26, h: 12, facing: 'n', color: '#3a1f4d', accent: '#ff5ce1',
     tags: ['games', 'arcade', 'play', 'fun', 'trivia', 'tournament', 'bored'],
     link: { type: 'games', id: 'arcade' }, activity: 'play',
+    led: [{ lines: ['GAME', 'ON'], tag: 'Tournament 7-9 PM', bg: ['#4776e6', '#8e54e9'] }],
   },
   {
     id: 'wayfare-hub', name: 'Wayfare Hub', kind: 'transit', template: 'hall',
@@ -129,7 +132,7 @@ export const PLACES = [
 ];
 
 export const PLAZA = {
-  id: 'central-plaza', name: 'Central Plaza', x: 0, z: 0, size: 40,
+  id: 'central-plaza', name: 'Central Plaza', x: 0, z: 0, size: 60,
   fountain: { x: 0, z: 0, r: 5.5 }, activity: 'fountain',
 };
 
@@ -153,11 +156,11 @@ export const BILLBOARDS = [
 
 // AI agents placed in the world. `agent` selects the capability set.
 export const AGENTS = [
-  { id: 'npc-pip', name: 'Pip', role: 'City Guide', agent: 'guide', x: 6, z: 6, color: '#ffd166', icon: '🧭' },
-  { id: 'npc-nia', name: 'Nia', role: 'Realtor', agent: 'realtor', x: 0, z: 81.5, color: '#36d399', icon: '🔑' },
-  { id: 'npc-theo', name: 'Theo', role: 'Recruiter', agent: 'recruiter', x: 6, z: -31.5, color: '#b794ff', icon: '💼' },
-  { id: 'npc-ada', name: 'Ada', role: 'Career Coach', agent: 'coach', x: 44, z: -31.5, color: '#7ee8a2', icon: '🎓' },
-  { id: 'npc-remy', name: 'Remy', role: 'Business Advisor', agent: 'advisor', x: -31.5, z: 0, color: '#ff8a5b', icon: '📈' },
+  { id: 'npc-pip', name: 'Pip', role: 'City Guide', agent: 'guide', x: 6, z: 6, color: '#ffd166', icon: '🧭', person: 'male_adult_08' },
+  { id: 'npc-nia', name: 'Nia', role: 'Realtor', agent: 'realtor', x: 0, z: 81.5, color: '#36d399', icon: '🔑', person: 'business_female_02' },
+  { id: 'npc-theo', name: 'Theo', role: 'Recruiter', agent: 'recruiter', x: 6, z: -31.5, color: '#b794ff', icon: '💼', person: 'business_male_02' },
+  { id: 'npc-ada', name: 'Ada', role: 'Career Coach', agent: 'coach', x: 44, z: -31.5, color: '#7ee8a2', icon: '🎓', person: 'female_adult_12' },
+  { id: 'npc-remy', name: 'Remy', role: 'Business Advisor', agent: 'advisor', x: -31.5, z: 0, color: '#ff8a5b', icon: '📈', person: 'male_adult_19' },
 ];
 
 // Sponsored collectible tokens for the sponsored quest.

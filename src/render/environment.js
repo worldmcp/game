@@ -19,9 +19,9 @@ export class Environment {
     this.sky = new Sky();
     this.sky.scale.setScalar(1500);
     const u = this.sky.material.uniforms;
-    u.turbidity.value = 4.5;
-    u.rayleigh.value = 1.6;
-    u.mieCoefficient.value = 0.004;
+    u.turbidity.value = 2.4;
+    u.rayleigh.value = 1.25;
+    u.mieCoefficient.value = 0.003;
     u.mieDirectionalG.value = 0.82;
     scene.add(this.sky);
     this.sun = new THREE.Vector3();

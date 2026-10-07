@@ -1,105 +1,82 @@
-// Avatars. High quality: rigged, animated human models (idle / walk / run
-// blended by speed, with a procedural wave). Low quality or if the models fail
-// to load: a lightweight stylised figure built from shared primitives.
+// Avatars. High/medium quality: realistic Rocketbox people driven by
+// motion-capture clips (idle / walk / run blended by speed, wave and talk
+// gestures). Low quality, or before a model has streamed in: a lightweight
+// stylised figure that is swapped for the real person once it loads.
 
 import * as THREE from 'three';
 import { loadModel, cloneSkinned } from './assets.js';
-import { MODELS } from '../config/assets.js';
+import { PEOPLE } from '../config/assets.js';
 
-let HUMANS = null; // { variants: { name: { scene, scale } }, clips: { idle, walk, run } }
-const NATURAL = { walk: 1.45, run: 4.2 }; // metres/second the clips were authored at
+const NATURAL = { walk: 1.4, run: 3.9 }; // metres/second the clips were captured at
+const people = new Map(); // id -> { scene, gender }
+const clips = { m: null, f: null };
+const waiting = new Map(); // id -> Set(avatar roots awaiting that model)
+let QUALITY = 'high';
 
-// Keep rotations only, so one clip set drives skeletons with different
-// proportions (retargeting between rigs that share Mixamo bone names).
-function rotationOnly(clip) {
+function rootMotionFree(clip) {
   const c = clip.clone();
-  c.tracks = c.tracks.filter((t) => t.name.endsWith('.quaternion'));
-  return c;
-}
-
-// Retarget rotation tracks between two Mixamo rigs whose bones share names
-// but whose rest orientations differ: q_target = restT · restS⁻¹ · q_source.
-function retarget(clip, sourceRest, targetRest) {
-  const c = clip.clone();
-  const C = new THREE.Quaternion();
-  const q = new THREE.Quaternion();
-  for (const track of c.tracks) {
-    const bone = track.name.split('.')[0];
-    const rs = sourceRest.get(bone);
-    const rt = targetRest.get(bone);
-    if (!rs || !rt) continue;
-    C.copy(rt).multiply(rs.clone().invert());
-    if (Math.abs(C.w) > 0.9995) continue;
-    const v = track.values;
-    for (let i = 0; i < v.length; i += 4) {
-      q.set(v[i], v[i + 1], v[i + 2], v[i + 3]).premultiply(C);
-      v[i] = q.x;
-      v[i + 1] = q.y;
-      v[i + 2] = q.z;
-      v[i + 3] = q.w;
-    }
-  }
-  return c;
-}
-
-function restPose(scene) {
-  const m = new Map();
-  scene.traverse((o) => o.isBone && m.set(o.name, o.quaternion.clone()));
-  return m;
-}
-
-export async function initHumans() {
-  const [michelle, soldier] = await Promise.all([loadModel('michelle'), loadModel('soldier')]);
-  const byName = (n) => soldier.animations.find((a) => a.name.toLowerCase() === n);
-  const base = { idle: rotationOnly(byName('idle')), walk: rotationOnly(byName('walk')), run: rotationOnly(byName('run')) };
-  const soldierRest = restPose(soldier.scene);
-  const variants = {};
-  for (const [name, gltf] of [['michelle', michelle], ['soldier', soldier]]) {
-    const clips = {};
-    const rest = restPose(gltf.scene);
-    for (const [k, clip] of Object.entries(base)) clips[k] = name === 'soldier' ? clip : retarget(clip, soldierRest, rest);
-    // Measure standing height with the idle pose applied.
-    const probe = cloneSkinned(gltf.scene);
-    const mixer = new THREE.AnimationMixer(probe);
-    mixer.clipAction(clips.idle).play();
-    mixer.update(0);
-    probe.updateMatrixWorld(true);
-    let footY = Infinity;
-    let headY = -Infinity;
-    probe.traverse((o) => {
-      if (!o.isBone) return;
-      const y = o.getWorldPosition(new THREE.Vector3()).y;
-      if (/Foot$/.test(o.name)) footY = Math.min(footY, y);
-      if (/Head$/.test(o.name)) headY = Math.max(headY, y);
+  // Keep rotations; keep the pelvis' vertical bob but not its travel.
+  c.tracks = c.tracks
+    .filter((t) => !/Footsteps|MotionExtraction/.test(t.name))
+    .filter((t) => t.name.endsWith('.quaternion') || t.name === 'Bip01.position')
+    .map((t) => {
+      if (t.name !== 'Bip01.position') return t;
+      const v = t.values.slice();
+      for (let i = 0; i < v.length; i += 3) {
+        v[i] = v[0];
+        v[i + 2] = v[2];
+      }
+      return new THREE.VectorKeyframeTrack(t.name, t.times, v);
     });
-    // Anatomy: ankle ≈ 0.05·h above ground, head joint ≈ 0.91·h.
-    const scale = (MODELS[name].height * 0.86) / (headY - footY || 1);
-    variants[name] = { scene: gltf.scene, scale, footY, clips };
-  }
-  HUMANS = { variants };
-  return HUMANS;
+  return c;
+}
+
+async function loadPerson(id) {
+  if (people.has(id)) return people.get(id);
+  const def = PEOPLE.find((p) => p.id === id);
+  const gltf = await loadModel(id);
+  const entry = { scene: gltf.scene, gender: def?.gender || 'm' };
+  people.set(id, entry);
+  for (const av of waiting.get(id) || []) swapIn(av, id);
+  waiting.delete(id);
+  return entry;
+}
+
+// Load animation sets + core people, then stream the rest in the background.
+export async function initHumans(quality = 'high') {
+  QUALITY = quality;
+  const [am, af] = await Promise.all([loadModel('anims_m'), loadModel('anims_f')]);
+  const pick = (g) => Object.fromEntries(['idle', 'walk', 'run', 'wave', 'talk'].map((n) => [n, rootMotionFree(g.animations.find((a) => a.name === n))]));
+  clips.m = pick(am);
+  clips.f = pick(af);
+  await Promise.all(PEOPLE.filter((p) => p.core).map((p) => loadPerson(p.id)));
+  const rest = PEOPLE.filter((p) => !p.core);
+  (async () => {
+    for (const p of rest) await loadPerson(p.id).catch(() => {});
+  })();
 }
 
 export function humansReady() {
-  return !!HUMANS;
+  return !!clips.m;
+}
+
+export function personIds() {
+  return PEOPLE.map((p) => p.id);
 }
 
 // ───────────────────────── stylised fallback ─────────────────────────
 const G = {
-  leg: new THREE.CapsuleGeometry(0.16, 0.55, 3, 8),
-  body: new THREE.CapsuleGeometry(0.34, 0.55, 4, 12),
-  head: new THREE.SphereGeometry(0.3, 16, 12),
-  hair: new THREE.SphereGeometry(0.315, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.55),
-  arm: new THREE.CapsuleGeometry(0.11, 0.5, 3, 8),
-  ring: new THREE.RingGeometry(0.55, 0.72, 32),
+  leg: new THREE.CapsuleGeometry(0.13, 0.62, 3, 8),
+  body: new THREE.CapsuleGeometry(0.24, 0.42, 4, 12),
+  head: new THREE.SphereGeometry(0.13, 16, 12),
+  arm: new THREE.CapsuleGeometry(0.07, 0.48, 3, 8),
+  ring: new THREE.RingGeometry(0.45, 0.58, 32),
 };
 const matCache = new Map();
-function mat(color, opts = {}) {
-  const key = `${color}:${JSON.stringify(opts)}`;
-  if (!matCache.has(key)) matCache.set(key, new THREE.MeshStandardMaterial({ color, roughness: 0.65, ...opts }));
-  return matCache.get(key);
+function mat(color) {
+  if (!matCache.has(color)) matCache.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.65 }));
+  return matCache.get(color);
 }
-const HAIR = ['#1b1b1f', '#3b2a20', '#6b4423', '#c9a46b', '#2d1f3d'];
 const PANTS = ['#2b3445', '#3d3d4a', '#1f2f3a', '#4a3b32'];
 
 function stylised({ color, skin, seed }) {
@@ -107,77 +84,88 @@ function stylised({ color, skin, seed }) {
   const pants = mat(PANTS[seed % PANTS.length]);
   const legL = new THREE.Mesh(G.leg, pants);
   const legR = new THREE.Mesh(G.leg, pants);
-  legL.position.set(-0.17, 0.45, 0);
-  legR.position.set(0.17, 0.45, 0);
+  legL.position.set(-0.12, 0.45, 0);
+  legR.position.set(0.12, 0.45, 0);
   const body = new THREE.Mesh(G.body, mat(color));
-  body.position.y = 1.25;
+  body.position.y = 1.18;
   const armL = new THREE.Mesh(G.arm, mat(color));
   const armR = new THREE.Mesh(G.arm, mat(color));
-  armL.position.set(-0.46, 1.3, 0);
-  armR.position.set(0.46, 1.3, 0);
+  armL.position.set(-0.33, 1.12, 0);
+  armR.position.set(0.33, 1.12, 0);
   const head = new THREE.Mesh(G.head, mat(skin));
-  head.position.y = 2.02;
-  const hair = new THREE.Mesh(G.hair, mat(HAIR[seed % HAIR.length]));
-  hair.position.y = 2.06;
-  hair.rotation.x = -0.25;
-  for (const m of [legL, legR, body, armL, armR, head, hair]) {
+  head.position.y = 1.66;
+  for (const m of [legL, legR, body, armL, armR, head]) {
     m.castShadow = true;
     rig.add(m);
   }
-  rig.scale.setScalar(0.85);
   return { rig, parts: { legL, legR, armL, armR, rig } };
 }
 
-// ───────────────────────── human ─────────────────────────
-function human({ color, seed, variant }) {
-  const v = HUMANS.variants[variant] || HUMANS.variants.michelle;
-  const model = cloneSkinned(v.scene);
-  model.scale.setScalar(v.scale);
-  model.position.y = -v.footY * v.scale + 0.05 * MODELS[variant === 'soldier' ? 'soldier' : 'michelle'].height;
-  const tint = new THREE.Color(color);
+// ───────────────────────── realistic person ─────────────────────────
+function human(id, seed) {
+  const p = people.get(id);
+  const model = cloneSkinned(p.scene);
   model.traverse((o) => {
     if (!o.isMesh) return;
     o.castShadow = true;
     o.receiveShadow = false;
-    o.frustumCulled = false; // skinned bounds don't follow animation
-    const m = o.material.clone();
-    if (/visor/i.test(m.name)) {
-      m.color = tint.clone();
-      m.emissive = tint.clone().multiplyScalar(0.25);
-    } else {
-      // Subtle per-person clothing tint keeps a crowd from looking cloned.
-      m.color = new THREE.Color(1, 1, 1).lerp(tint, variant === 'soldier' ? 0.45 : 0.18);
-    }
-    o.material = m;
+    o.frustumCulled = false; // skinned bounds don't follow the animation
   });
   const mixer = new THREE.AnimationMixer(model);
+  const set = clips[p.gender] || clips.m;
   const actions = {};
-  for (const [k, clip] of Object.entries(v.clips)) {
+  for (const [k, clip] of Object.entries(set)) {
     const a = mixer.clipAction(clip);
-    a.play();
-    a.setEffectiveWeight(k === 'idle' ? 1 : 0);
-    a.time = (seed * 0.37) % clip.duration;
+    if (k === 'wave' || k === 'talk') {
+      a.setLoop(THREE.LoopRepeat);
+      a.enabled = true;
+      a.setEffectiveWeight(0);
+      a.play();
+    } else {
+      a.play();
+      a.setEffectiveWeight(k === 'idle' ? 1 : 0);
+    }
+    a.time = (seed * 0.61) % clip.duration;
     actions[k] = a;
   }
-  let rightArm = null;
-  let rightForeArm = null;
-  model.traverse((o) => {
-    if (o.isBone && /RightArm$/.test(o.name)) rightArm = o;
-    if (o.isBone && /RightForeArm$/.test(o.name)) rightForeArm = o;
-  });
-  return { model, mixer, actions, rightArm, rightForeArm };
+  return { model, mixer, actions, gesture: 0 };
 }
 
-export function createAvatar({ color = '#39a6df', skin = '#c68642', seed = 0, scale = 1, ring = null, variant = null, quality = 'high' } = {}) {
+function swapIn(root, id) {
+  const ud = root.userData;
+  if (ud.human || QUALITY === 'low') return;
+  if (ud.parts) {
+    root.remove(ud.parts.rig);
+    ud.parts = null;
+  }
+  const h = human(id, ud.seed);
+  root.add(h.model);
+  ud.human = h;
+}
+
+export function pickPerson(seed, { gender = null, prefer = null } = {}) {
+  if (prefer && PEOPLE.some((p) => p.id === prefer)) return prefer;
+  const pool = PEOPLE.filter((p) => !gender || p.gender === gender);
+  return pool[Math.abs(seed) % pool.length].id;
+}
+
+export function createAvatar({ color = '#39a6df', skin = '#c68642', seed = 0, ring = null, person = null, quality = 'high' } = {}) {
   const root = new THREE.Group();
-  if (HUMANS && quality !== 'low') {
-    const h = human({ color, seed, variant: variant || (seed % 2 ? 'soldier' : 'michelle') });
+  const id = person || pickPerson(seed);
+  root.userData.seed = seed;
+  root.userData.person = id;
+  if (quality !== 'low' && people.has(id) && clips.m) {
+    const h = human(id, seed);
     root.add(h.model);
     root.userData.human = h;
   } else {
     const s = stylised({ color, skin, seed });
     root.add(s.rig);
     root.userData.parts = s.parts;
+    if (quality !== 'low') {
+      if (!waiting.has(id)) waiting.set(id, new Set());
+      waiting.get(id).add(root);
+    }
   }
   if (ring) {
     const r = new THREE.Mesh(G.ring, new THREE.MeshBasicMaterial({ color: ring, transparent: true, opacity: 0.85, depthWrite: false }));
@@ -186,19 +174,34 @@ export function createAvatar({ color = '#39a6df', skin = '#c68642', seed = 0, sc
     root.add(r);
     root.userData.ring = r;
   }
-  root.scale.setScalar(scale);
   root.userData.phase = (seed * 1.37) % (Math.PI * 2);
   return root;
+}
+
+// Change which person an avatar shows (e.g. the player picks a new look).
+export function setPerson(root, id) {
+  if (root.userData.person === id) return;
+  const h = root.userData.human;
+  if (h) {
+    root.remove(h.model);
+    root.userData.human = null;
+  }
+  root.userData.person = id;
+  if (people.has(id)) swapIn(root, id);
+  else {
+    const s = stylised({ color: '#39a6df', skin: '#c68642', seed: root.userData.seed });
+    root.add(s.rig);
+    root.userData.parts = s.parts;
+    loadPerson(id).then(() => swapIn(root, id)).catch(() => {});
+  }
 }
 
 const smooth = (a, b, x) => {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 };
-const _q = new THREE.Quaternion();
-const _e = new THREE.Euler();
 
-// speed is normalised (metres per second / 6) for backwards compatibility.
+// speed is normalised (metres per second / 6). emote: 'wave' | 'talk' | null
 export function animateAvatar(avatar, t, speed, emote = null) {
   const ud = avatar.userData;
   const dt = Math.min(0.1, ud.lastT === undefined ? 0 : t - ud.lastT);
@@ -207,31 +210,36 @@ export function animateAvatar(avatar, t, speed, emote = null) {
   const h = ud.human;
   if (h) {
     const v = speed * 6;
-    const moving = smooth(0.15, 0.8, v);
-    const running = smooth(2.6, 4.6, v);
-    h.actions.idle.setEffectiveWeight(1 - moving);
+    const moving = smooth(0.15, 0.9, v);
+    const running = smooth(2.4, 4.4, v);
+    // Gestures fade in only while standing still.
+    const target = emote && moving < 0.2 ? 1 : 0;
+    h.gesture += (target - h.gesture) * Math.min(1, dt * 5);
+    if (emote && emote !== h.gestureName) {
+      h.gestureName = emote;
+      h.actions[emote]?.reset();
+    }
+    const gw = h.gesture;
+    const gName = h.gestureName;
+    h.actions.idle.setEffectiveWeight((1 - moving) * (1 - gw));
     h.actions.walk.setEffectiveWeight(moving * (1 - running));
     h.actions.run.setEffectiveWeight(moving * running);
-    h.actions.walk.timeScale = Math.max(0.6, Math.min(2.2, v / NATURAL.walk));
-    h.actions.run.timeScale = Math.max(0.7, Math.min(1.6, v / NATURAL.run));
+    h.actions.wave.setEffectiveWeight(gName === 'wave' ? gw * (1 - moving) : 0);
+    h.actions.talk.setEffectiveWeight(gName === 'talk' ? gw * (1 - moving) : 0);
+    h.actions.walk.timeScale = Math.max(0.6, Math.min(2.4, v / NATURAL.walk));
+    h.actions.run.timeScale = Math.max(0.7, Math.min(1.7, v / NATURAL.run));
     h.mixer.update(dt);
-    if (emote === 'wave' && h.rightArm) {
-      // Raise the right arm and swing the forearm on top of the clip.
-      _q.setFromEuler(_e.set(0, 0, 2.2 + Math.sin(t * 2) * 0.05));
-      h.rightArm.quaternion.multiply(_q);
-      if (h.rightForeArm) h.rightForeArm.quaternion.multiply(_q.setFromEuler(_e.set(0, 0, 0.5 + Math.sin(t * 12) * 0.45)));
-    }
     return;
   }
   const { legL, legR, armL, armR, rig } = ud.parts;
-  const s = Math.min(1, speed);
-  const swing = Math.sin(t * 10 + ud.phase) * 0.7 * s;
+  const s = Math.min(1, speed * 1.5);
+  const swing = Math.sin(t * 9 + ud.phase) * 0.6 * s;
   legL.rotation.x = swing;
   legR.rotation.x = -swing;
   armL.rotation.x = -swing * 0.8;
   armR.rotation.x = swing * 0.8;
   armR.rotation.z = 0;
-  rig.position.y = Math.abs(Math.sin(t * 10 + ud.phase)) * 0.08 * s;
+  rig.position.y = Math.abs(Math.sin(t * 9 + ud.phase)) * 0.05 * s;
   if (emote === 'wave') {
     armR.rotation.z = 2.6 + Math.sin(t * 14) * 0.35;
     armR.rotation.x = 0;
@@ -239,17 +247,50 @@ export function animateAvatar(avatar, t, speed, emote = null) {
 }
 
 export function recolorAvatar(avatar, color) {
-  const tint = new THREE.Color(color);
-  const h = avatar.userData.human;
-  if (h) {
-    h.model.traverse((o) => {
-      if (!o.isMesh) return;
-      if (/visor/i.test(o.material.name)) o.material.color.copy(tint);
-      else o.material.color = new THREE.Color(1, 1, 1).lerp(tint, 0.3);
-    });
-    return;
-  }
-  avatar.traverse((o) => {
-    if (o.isMesh && o.material?.color && o.geometry === G.body) o.material = mat(color);
-  });
+  // Realistic people keep their clothing; the identity colour lives on the ring.
+  avatar.userData.ring?.material.color.set(color);
+}
+
+// Head-and-shoulders portrait (data URL) for HUD cards.
+const portraitCache = new Map();
+export function portraitOf(renderer, id) {
+  if (portraitCache.has(id)) return portraitCache.get(id);
+  const p = people.get(id);
+  if (!p || !renderer) return null;
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color('#2a3d5c');
+  scene.add(new THREE.HemisphereLight('#ffffff', '#445566', 2.2));
+  const key = new THREE.DirectionalLight('#fff3e0', 2.4);
+  key.position.set(1, 2, 3);
+  scene.add(key);
+  const m = cloneSkinned(p.scene);
+  const mixer = new THREE.AnimationMixer(m);
+  mixer.clipAction((clips[p.gender] || clips.m).idle).play();
+  mixer.update(0.5);
+  scene.add(m);
+  m.updateMatrixWorld(true);
+  let head = null;
+  m.traverse((o) => o.isBone && /Head$/.test(o.name) && (head = o));
+  const hp = head ? head.getWorldPosition(new THREE.Vector3()) : new THREE.Vector3(0, 1.6, 0);
+  const cam = new THREE.PerspectiveCamera(28, 1, 0.05, 10);
+  cam.position.set(hp.x, hp.y + 0.02, hp.z + 0.95);
+  cam.lookAt(hp.x, hp.y - 0.04, hp.z);
+  const rt = new THREE.WebGLRenderTarget(128, 128);
+  rt.texture.colorSpace = THREE.SRGBColorSpace;
+  const prev = renderer.getRenderTarget();
+  renderer.setRenderTarget(rt);
+  renderer.render(scene, cam);
+  const px = new Uint8Array(128 * 128 * 4);
+  renderer.readRenderTargetPixels(rt, 0, 0, 128, 128, px);
+  renderer.setRenderTarget(prev);
+  rt.dispose();
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const img = g.createImageData(128, 128);
+  for (let y = 0; y < 128; y++) img.data.set(px.subarray((127 - y) * 512, (128 - y) * 512), y * 512);
+  g.putImageData(img, 0, 0);
+  const url = c.toDataURL('image/jpeg', 0.85);
+  portraitCache.set(id, url);
+  return url;
 }

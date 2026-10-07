@@ -5,9 +5,9 @@
 const base = new URL('../../assets/', import.meta.url).href;
 
 export const MODELS = {
-  // People (rigged, animated). Source: three.js examples (Mixamo characters).
-  michelle: { url: `${base}models/people/michelle.glb`, height: 1.72, kind: 'person' },
-  soldier: { url: `${base}models/people/soldier.glb`, height: 1.8, kind: 'person' },
+  // Animation sets (Microsoft Rocketbox, motion capture): idle, walk, run, wave, talk.
+  anims_m: { url: `${base}models/people/anims_m.glb`, kind: 'anims' },
+  anims_f: { url: `${base}models/people/anims_f.glb`, kind: 'anims' },
   // Vehicles
   car: { url: `${base}models/vehicles/car.glb`, length: 4.4, kind: 'vehicle' },
   // Products (Khronos glTF Sample Assets)
@@ -28,12 +28,34 @@ export const MODELS = {
   olives: { url: `${base}models/products/olives.glb`, size: 0.22 },
 };
 
+// Realistic people (Microsoft Rocketbox Avatar Library, MIT). `core` avatars
+// load before entering the world; the rest stream in afterwards.
+export const PEOPLE = [
+  { id: 'female_adult_01', gender: 'f', label: 'Casual · Ava', core: true },
+  { id: 'male_adult_01', gender: 'm', label: 'Casual · Leo', core: true },
+  { id: 'female_adult_05', gender: 'f', label: 'Casual · Zara', core: true },
+  { id: 'male_adult_04', gender: 'm', label: 'Casual · Kofi', core: true },
+  { id: 'business_female_02', gender: 'f', label: 'Business · Nia' },
+  { id: 'business_male_02', gender: 'm', label: 'Business · Theo' },
+  { id: 'female_adult_03', gender: 'f', label: 'Casual · Mei' },
+  { id: 'male_adult_08', gender: 'm', label: 'Casual · Sam' },
+  { id: 'female_adult_08', gender: 'f', label: 'Casual · Ines' },
+  { id: 'male_adult_11', gender: 'm', label: 'Casual · Dev' },
+  { id: 'female_adult_12', gender: 'f', label: 'Smart · Ada' },
+  { id: 'male_adult_15', gender: 'm', label: 'Smart · Marcus' },
+  { id: 'female_adult_15', gender: 'f', label: 'Street · Kemi' },
+  { id: 'male_adult_19', gender: 'm', label: 'Traditional · Omar' },
+  { id: 'chef_female_01', gender: 'f', label: 'Chef · Lena' },
+  { id: 'construction_male_01', gender: 'm', label: 'Builder · Joe' },
+];
+for (const p of PEOPLE) MODELS[p.id] = { url: `${base}models/people/${p.id}.glb`, kind: 'person' };
+
 export const TEXTURES = {
   waterNormals: `${base}textures/waternormals.jpg`,
 };
 
 export const CREDITS = [
-  { asset: 'Michelle, Soldier (rigged characters + Idle/Walk/Run)', source: 'three.js examples (r160) · originally Mixamo / Adobe', license: 'Mixamo terms — royalty-free use inside projects; confirm before commercial launch', url: 'https://github.com/mrdoob/three.js/tree/r160/examples/models/gltf' },
+  { asset: '16 realistic people + motion-capture animations (idle, walk, run, wave, talk)', source: 'Microsoft Rocketbox Avatar Library (converted to glTF, textures resized)', license: 'MIT', url: 'https://github.com/microsoft/Microsoft-Rocketbox' },
   { asset: 'Car Concept', source: 'Khronos glTF Sample Assets · Eric Chadwick / Darmstadt Graphics Group', license: 'CC BY 4.0 (logo meshes removed)', url: 'https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/CarConcept' },
   { asset: 'Materials Variants Shoe', source: 'Khronos glTF Sample Assets · Shopify', license: 'CC BY 4.0', url: 'https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/MaterialsVariantsShoe' },
   { asset: 'Chronograph Watch', source: 'Khronos glTF Sample Assets · Eric Chadwick', license: 'CC BY 4.0', url: 'https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/ChronographWatch' },

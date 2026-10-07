@@ -30,7 +30,9 @@ export function loadModel(name) {
 // (or the manifest size) and resting on y=0, centred on x/z.
 export async function productInstance(name, size) {
   const gltf = await loadModel(name);
-  return fitObject(gltf.scene.clone(true), size ?? MODELS[name].size);
+  const o = fitObject(gltf.scene.clone(true), size ?? MODELS[name].size);
+  o.userData.product = name;
+  return o;
 }
 
 export function fitObject(obj, size) {

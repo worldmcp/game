@@ -43,6 +43,7 @@ export class LocalPresenceTransport {
         presence: String(p.presence || 'Online').slice(0, 24),
         roles: Array.isArray(p.roles) ? p.roles.slice(0, 6).map((r) => String(r).slice(0, 24)) : [],
         bio: String(p.bio || '').slice(0, 140),
+        avatar: /^[a-z0-9_]{3,40}$/.test(p.avatar) ? p.avatar : null,
         x: Number(msg.x) || 0,
         z: Number(msg.z) || 0,
         ry: Number(msg.ry) || 0,
