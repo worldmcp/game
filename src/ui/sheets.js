@@ -484,7 +484,7 @@ PLACE_KINDS.market = {
   },
   actions: {
     async buy(app, props, id, s) {
-      if (!confirm('Buy this item with your Pludor Wallet?')) return;
+      if (!(await app.hud.confirm('Buy this item?', 'Paid from your Pludor Wallet. Arrange pickup with the seller in messages.', 'Buy'))) return;
       const r = await app.api.commerce.buyListing(id);
       app.hud.showProgress(r.progress);
       app.hud.toast('Purchased — arrange pickup with the seller in messages', '🛍️');
@@ -833,7 +833,7 @@ VIEWS.parcel = {
     },
     async rent(app, props, a, s) {
       const parcel = PARCELS.find((x) => x.id === props.id);
-      if (!confirm(`Rent ${parcel.name} for ${sym()}${parcel.rentPerWeek}/week from your Pludor Wallet?`)) return;
+      if (!(await app.hud.confirm(`Rent ${parcel.name}?`, `${sym()}${parcel.rentPerWeek} for one week, paid from your Pludor Wallet.`, 'Rent'))) return;
       const r = await app.api.land.rent(props.id, props.template);
       app.hud.showProgress(r);
       app.hud.toast('Parcel rented — your building is going up!', '🏗️');
@@ -978,7 +978,7 @@ VIEWS.player = {
       s.render(true);
     },
     async report(app, props, id) {
-      const reason = prompt('What happened? (harassment, spam, scam, other)');
+      const reason = await app.hud.choose('Report this player', 'What happened? Pludor moderation reviews every report.', ['Harassment', 'Spam', 'Scam or fraud', 'Inappropriate content', 'Other']);
       if (!reason) return;
       const t = await app.api.social.report(id, reason);
       app.hud.toast(`Report ${t.id} sent to Pludor moderation`, '🛡️');
@@ -1311,7 +1311,7 @@ VIEWS.events = {
   },
   actions: {
     async ticket(app, props, id, s) {
-      if (!confirm('Buy this ticket with your Pludor Wallet?')) return;
+      if (!(await app.hud.confirm('Buy this ticket?', 'Paid from your Pludor Wallet.', 'Buy ticket'))) return;
       await app.api.events.buyTicket(id);
       app.hud.toast('Ticket purchased', '🎟️');
       await app.refresh();
@@ -1472,9 +1472,12 @@ VIEWS.settings = {
       s.render(true);
     },
     quality(app, props, q) {
-      const u = new URL(location.href);
-      u.searchParams.set('quality', q);
-      location.href = u.toString();
+      try {
+        localStorage.setItem('pw-quality', q);
+      } catch {
+        /* storage blocked: applies this session only */
+      }
+      location.reload();
     },
     logout: (app) => app.logout?.(),
   },

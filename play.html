@@ -1,0 +1,14 @@
+<title>Pludor World</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles/world.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #0b1220; color: #e8eefc; color-scheme: dark; overscroll-behavior: none; }
+  :root { padding: 0 !important; }
+  #world { position: fixed; inset: 0; }
+</style>
+<script type="importmap">{ "imports": { "three": "./vendor/three/three.module.min.js", "three/addons/": "./vendor/three/addons/" } }</script>
+<div id="world"></div>
+<noscript><div style="padding:40px;font:16px system-ui">Pludor World needs JavaScript and WebGL.</div></noscript>
+<script type="module" src="src/demo.js"></script>

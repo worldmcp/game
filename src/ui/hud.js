@@ -428,6 +428,36 @@ export class Hud {
     next();
   }
 
+  // In-world confirmation (native confirm()/prompt() are blocked in some
+  // embeds and break immersion). Resolves true/false, or the chosen option.
+  confirm(title, body, okLabel = 'Confirm') {
+    return this._dialog(title, body, [[okLabel, true], ['Cancel', false]]);
+  }
+
+  choose(title, body, options) {
+    return this._dialog(title, body, [...options.map((o) => [o, o]), ['Cancel', null]]);
+  }
+
+  _dialog(title, body, buttons) {
+    return new Promise((resolve) => {
+      const m = this.q('.pw-link-modal');
+      m.hidden = false;
+      m.innerHTML = html`<div class="pw-link-box" role="dialog" aria-modal="true"><b>${title}</b><p class="pw-muted">${body}</p>
+        <div class="pw-dialog-btns">${buttons.map(([label], i) => html`<button class="pw-btn ${i === buttons.length - 1 ? 'ghost' : ''}" data-i="${i}">${label}</button>`)}</div></div>`.s;
+      const done = (v) => {
+        m.hidden = true;
+        m.onclick = null;
+        resolve(v);
+      };
+      m.onclick = (e) => {
+        const b = e.target.closest('[data-i]');
+        if (b) done(buttons[Number(b.dataset.i)][1]);
+        else if (e.target === m) done(buttons[buttons.length - 1][1]);
+      };
+      m.querySelector('[data-i]')?.focus();
+    });
+  }
+
   showLink(route) {
     const m = this.q('.pw-link-modal');
     m.hidden = false;

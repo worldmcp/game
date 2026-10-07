@@ -37,7 +37,12 @@ export class WorldApp {
     this.keys = new Set();
     this.lowPower = matchMedia('(pointer: coarse)').matches || (navigator.hardwareConcurrency || 8) <= 4;
     // high: full PBR + bloom · medium: PBR, no post · low: stylised, no shadows
-    const q = new URLSearchParams(location.search).get('quality');
+    let q = new URLSearchParams(location.search).get('quality');
+    try {
+      q ||= localStorage.getItem('pw-quality');
+    } catch {
+      /* storage blocked */
+    }
     this.quality = ['high', 'medium', 'low'].includes(q) ? q : this.lowPower ? 'medium' : 'high';
     this.state = { places: [], gigs: [], parcels: [], events: [], progress: null, wallet: null, needs: {}, profile: null, tokens: [], courses: [] };
     this.focus = null;
