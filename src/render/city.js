@@ -45,9 +45,12 @@ export function batchStatic(group, { shallow = false } = {}) {
   for (const meshes of buckets.values()) {
     if (meshes.length < 2) continue;
     const geos = [];
+    // Keep the second UV set when every part has it (AO maps often use it).
+    const keep = ['position', 'normal', 'uv'];
+    if (meshes.every((m) => m.geometry.attributes.uv1)) keep.push('uv1');
     for (const m of meshes) {
       const g = m.geometry.clone();
-      for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+      for (const k of Object.keys(g.attributes)) if (!keep.includes(k)) g.deleteAttribute(k);
       if (!g.attributes.uv || !g.attributes.normal) {
         geos.length = 0;
         break;
@@ -58,7 +61,17 @@ export function batchStatic(group, { shallow = false } = {}) {
     if (!geos.length) continue;
     const merged = mergeGeometries(geos, false);
     if (!merged) continue;
-    const mesh = new THREE.Mesh(merged, meshes[0].material);
+    let mat = meshes[0].material;
+    const ch1 = ['map', 'aoMap', 'lightMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'bumpMap', 'alphaMap'].filter((k) => mat[k]?.channel === 1);
+    if (ch1.length && !merged.attributes.uv1) {
+      // No second UV set survived the merge: sample those maps from uv.
+      mat = mat.clone();
+      for (const k of ch1) {
+        mat[k] = mat[k].clone();
+        mat[k].channel = 0;
+      }
+    }
+    const mesh = new THREE.Mesh(merged, mat);
     mesh.castShadow = meshes[0].castShadow;
     mesh.receiveShadow = true;
     for (const m of meshes) m.parent.remove(m);

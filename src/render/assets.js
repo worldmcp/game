@@ -33,6 +33,21 @@ async function fetchModel(url) {
   return loader.parseAsync(bytes.buffer, url.slice(0, url.lastIndexOf('/') + 1));
 }
 
+// A map on the second UV set (e.g. AO) with no uv1 in the geometry fails
+// to compile and the mesh never draws. Reuse uv for it instead.
+const UV_MAPS = ['map', 'aoMap', 'lightMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'bumpMap', 'alphaMap'];
+function fixUvChannels(mesh) {
+  const g = mesh.geometry;
+  if (g.attributes.uv1) return;
+  for (const m of [].concat(mesh.material)) {
+    for (const k of UV_MAPS) {
+      if (m[k]?.channel !== 1) continue;
+      if (g.attributes.uv) g.setAttribute('uv1', g.attributes.uv);
+      else m[k].channel = 0;
+    }
+  }
+}
+
 export function loadModel(name) {
   if (!MODELS[name]) return Promise.reject(new Error(`Unknown model ${name}`));
   if (!cache.has(name)) {
@@ -45,6 +60,7 @@ export function loadModel(name) {
         if (o.isMesh) {
           o.castShadow = true;
           o.receiveShadow = true;
+          fixUvChannels(o);
         }
       });
       return gltf;

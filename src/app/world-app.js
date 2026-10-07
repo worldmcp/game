@@ -23,6 +23,8 @@ import { buildInterior, interiorKindFor, INTERIOR_Y, drawCinemaFrame } from '../
 import { adTexture } from '../render/textures.js';
 import { Sheets } from '../ui/sheets.js';
 import { StudioStage, BACKDROPS } from '../render/studio-stage.js';
+import { buildVehicle, pickVehicleType, VEHICLE_TYPES, rigGlbWheels, updateWheels } from '../render/vehicles.js';
+import { buildRoadNet, entryPoint, legPoints, chooseNext, roadY } from '../core/road-net.js';
 
 const PROX = ECONOMY.proximity;
 const BOT_ANCHORS = {
@@ -194,6 +196,7 @@ export class WorldApp {
     holder.add(src);
     holder.rotation.y = alongX ? (sign > 0 ? -Math.PI / 2 : Math.PI / 2) : sign > 0 ? 0 : Math.PI;
     this.carTemplate = fitObject(holder, 4.5, true);
+    rigGlbWheels(this.carTemplate);
   }
 
   recolorPlayer(color) {
@@ -280,71 +283,129 @@ export class WorldApp {
         this.idlers.push({ av, emote: i === 0 ? 'talk' : null });
       }
     });
-    const carGeo = { body: new THREE.BoxGeometry(2, 0.8, 4.2), cabin: new THREE.BoxGeometry(1.7, 0.7, 2.2), wheel: new THREE.CylinderGeometry(0.38, 0.38, 0.3, 12) };
-    const carCols = ['#e63946', '#f1faee', '#1d3557', '#ffb703', '#2a9d8f', '#8338ec', '#fb5607', '#adb5bd'];
-    const wheelMat = new THREE.MeshStandardMaterial({ color: '#1b1b1b' });
-    const glassMat = new THREE.MeshStandardMaterial({ color: '#1e2a38', roughness: 0.1, metalness: 0.5 });
     this.lightMat = new THREE.MeshStandardMaterial({ color: '#fff', emissive: '#fff2c4', emissiveIntensity: 0.2 });
     this.carLights = new Set([this.lightMat]);
+    this._initTraffic();
+  }
+
+  // City traffic: everyday cars, taxis, minibuses, vans, pickups and buses
+  // (plus the odd sports car) driving the whole street grid, choosing a turn
+  // at every junction and giving way to whoever is already in it.
+  _initTraffic() {
     this.cars = [];
-    const loops = [-75, -75]; // inner ring is pedestrianised around the plaza
-    const nCars = this.lowPower ? 5 : 8;
-    for (let k = 0; k < nCars; k++) {
-      const R = Math.abs(loops[k % 2]);
-      const cw = k % 4 < 2;
-      const off = cw ? -2.4 : 2.4;
-      const r = R + off;
-      let ring = [[-r, -r], [r, -r], [r, r], [-r, r]];
-      if (!cw) ring = ring.reverse();
-      ring = roundCorners(ring, 4.5);
+    const boxes = this.city.colliders.filter((c) => !c.round && c.x1 - c.x0 < 400);
+    // A street is drivable only if both lanes are clear of buildings/props.
+    const clear = (a, b) => {
+      for (let k = 1; k < 12; k++) {
+        const t = k / 12;
+        const x = a.x + (b.x - a.x) * t;
+        const z = a.z + (b.z - a.z) * t;
+        const ox = a.x === b.x ? 2.5 : 0;
+        const oz = a.z === b.z ? 2.5 : 0;
+        for (const s of [-1, 1]) {
+          const px = x + ox * s;
+          const pz = z + oz * s;
+          if (boxes.some((c) => px > c.x0 - 0.6 && px < c.x1 + 0.6 && pz > c.z0 - 0.6 && pz < c.z1 + 0.6)) return false;
+        }
+      }
+      return true;
+    };
+    const net = (this.roadNet = buildRoadNet({ lines: [-275, -225, -175, -125, -75, -25, 25, 75, 125, 175, 225, 275], limit: 175, edgeOk: clear }));
+    let seed = 20261007;
+    const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+    // Start on different streets, nearest the district first, spread out.
+    const edges = [];
+    for (const a of net.nodes) for (const b of a.out) edges.push([a, b, Math.hypot((a.x + b.x) / 2, (a.z + b.z) / 2) + rnd() * 120]);
+    edges.sort((p, q) => p[2] - q[2]);
+    const used = new Set();
+    const n = this.lowPower ? 14 : 26;
+    for (const [a, b] of edges) {
+      if (this.cars.length >= n) break;
+      const k = [a.id, b.id].sort().join('|');
+      if (used.has(k)) continue;
+      used.add(k);
+      const type = pickVehicleType(rnd);
+      const brake = new THREE.MeshStandardMaterial({ color: '#400', emissive: '#ff1a1a', emissiveIntensity: 0.3 });
       let g;
-      let brake = null;
-      if (this.carTemplate) {
+      if (VEHICLE_TYPES[type].glb && this.carTemplate) {
         g = this.carTemplate.clone(true);
-        const paint = new THREE.Color(carCols[k % carCols.length]);
+        const paintCol = new THREE.Color(['#e63946', '#111111', '#ffb703', '#f1faee', '#8338ec'][this.cars.length % 5]);
         g.traverse((o) => {
           if (!o.isMesh) return;
           if (/paint/i.test(o.material.name)) {
             o.material = o.material.clone();
-            o.material.color.copy(paint);
+            o.material.color.copy(paintCol);
           }
-          if (/brakelight/i.test(o.material.name)) {
-            brake ||= o.material.clone();
-            o.material = brake;
-          } else if (/headlight/i.test(o.material.name)) this.carLights.add(o.material);
+          if (/brakelight/i.test(o.material.name)) o.material = brake;
+          else if (/headlight/i.test(o.material.name)) this.carLights.add(o.material);
         });
-      } else {
-        g = new THREE.Group();
-        const body = new THREE.Mesh(carGeo.body, new THREE.MeshStandardMaterial({ color: carCols[k % carCols.length], roughness: 0.35, metalness: 0.4 }));
-        body.position.y = 0.75;
-        const cabin = new THREE.Mesh(carGeo.cabin, glassMat);
-        cabin.position.set(0, 1.45, -0.2);
-        g.add(body, cabin);
-        for (const [x, z] of [[-0.95, 1.3], [0.95, 1.3], [-0.95, -1.3], [0.95, -1.3]]) {
-          const w = new THREE.Mesh(carGeo.wheel, wheelMat);
-          w.rotation.z = Math.PI / 2;
-          w.position.set(x, 0.4, z);
-          g.add(w);
-        }
-        for (const x of [-0.6, 0.6]) {
-          const l = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.1), this.lightMat);
-          l.position.set(x, 0.85, 2.12);
-          g.add(l);
-        }
-      }
-      g.traverse((c) => c.isMesh && (c.castShadow = true));
+      } else g = buildVehicle(VEHICLE_TYPES[type].glb ? 'sedan' : type, { headMat: this.lightMat, brakeMat: brake, rnd });
+      const d = Math.hypot(b.x - a.x, b.z - a.z);
+      const dx = (b.x - a.x) / d;
+      const dz = (b.z - a.z) / d;
+      const E = entryPoint(net, a, b);
+      const f = 0.15 + rnd() * 0.6;
+      const sx = a.x + dx * net.turnR - dz * net.lane;
+      const sz = a.z + dz * net.turnR + dx * net.lane;
+      g.position.set(sx + (E.x - sx) * f, 0.01, sz + (E.z - sz) * f);
+      g.rotation.y = Math.atan2(dx, dz);
       this.scene.add(g);
-      if (!brake) {
-        brake = new THREE.MeshStandardMaterial({ color: '#400', emissive: '#ff1a1a', emissiveIntensity: 0.3 });
-        for (const x of [-0.6, 0.6]) {
-          const l = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.18, 0.08), brake);
-          l.position.set(x, 0.85, -2.12);
-          g.add(l);
-        }
-      }
-      if (brake.emissive) brake.emissive.set('#ff1a1a');
-      this.cars.push({ g, ring, seg: (k * 5 + (k >> 1) * 2) % ring.length, t: (k * 0.29) % 1, speed: 7 + (k % 3) * 2, brake, honkAt: 0, blockedFor: 0 });
+      const t = VEHICLE_TYPES[type];
+      this.cars.push({ g, a, b, path: [E], pi: 0, curveEnd: 0, lockNode: null, wait: 0, type, len: t.L || 4.6, speed: t.speed * (0.85 + rnd() * 0.3), v: 0, brake, honkAt: 0, blockedFor: 0 });
     }
+  }
+
+  // Move a traffic car `dist` metres along its route; at a junction it
+  // waits for the box to be clear, then takes the next leg.
+  _driveTraffic(c, dist, dt) {
+    const net = this.roadNet;
+    const p = c.g.position;
+    for (let guard = 0; dist > 1e-4 && guard < 24; guard++) {
+      if (c.pi >= c.path.length) {
+        const node = c.b;
+        if (node.lock && node.lock !== c && c.wait < 8) break;
+        const nx = chooseNext(c.a, c.b);
+        const leg = legPoints(net, c.a, c.b, nx);
+        node.lock = c;
+        c.lockNode = node;
+        c.curveEnd = leg.curveEnd;
+        c.path = leg.points;
+        c.pi = 0;
+        c.a = c.b;
+        c.b = nx;
+        c.wait = 0;
+      }
+      const tg = c.path[c.pi];
+      const dx = tg.x - p.x;
+      const dz = tg.z - p.z;
+      const d = Math.hypot(dx, dz);
+      if (d <= dist) {
+        p.x = tg.x;
+        p.z = tg.z;
+        dist -= d;
+        c.pi += 1;
+        if (c.lockNode && c.pi >= c.curveEnd) {
+          if (c.lockNode.lock === c) c.lockNode.lock = null;
+          c.lockNode = null;
+        }
+      } else {
+        p.x += (dx / d) * dist;
+        p.z += (dz / d) * dist;
+        dist = 0;
+      }
+    }
+    // Face along the route; front wheels follow the turn.
+    const tg = c.path[Math.min(c.pi, c.path.length - 1)];
+    const before = c.g.rotation.y;
+    if (tg && Math.hypot(tg.x - p.x, tg.z - p.z) > 0.05) {
+      let diff = Math.atan2(tg.x - p.x, tg.z - p.z) - c.g.rotation.y;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      c.g.rotation.y += diff * Math.min(1, dt * 6);
+    }
+    const yaw = Math.atan2(Math.sin(c.g.rotation.y - before), Math.cos(c.g.rotation.y - before));
+    const steer = Math.max(-0.5, Math.min(0.5, ((yaw / Math.max(dt, 1e-3)) * (c.g.userData.base || 2.7)) / Math.max(c.v, 1.5)));
+    p.y = roadY(net, p.x, p.z);
+    updateWheels(c.g, c.v, dt, steer);
   }
 
   _initTokens() {
@@ -1371,6 +1432,7 @@ export class WorldApp {
     for (const b of this.bots.values()) add(b.avatar);
     for (const a of this.agents) add(a.avatar);
     for (const e of this.peers.values()) add(e.avatar);
+    for (const c of this.cars || []) if (c.g.visible) add(c.g, Math.min(2.2, 1.1 + c.len * 0.08));
   }
 
   _input() {
@@ -1420,7 +1482,7 @@ export class WorldApp {
     const R = d.isCar ? 1.25 : 0.5;
     let res = this._collideR(nx, nz, pos.x, pos.z, R);
     res = this.obstacles.resolve(res.x, res.z, R);
-    const blockedBy = this.crowd.find((p) => p.ref !== this.player && Math.hypot(p.x - res.x, p.z - res.z) < R + 0.35);
+    const blockedBy = this.crowd.find((p) => p.ref !== this.player && Math.hypot(p.x - res.x, p.z - res.z) < R + (p.r > 1 ? p.r : 0.35));
     const moved = Math.hypot(res.x - pos.x, res.z - pos.z);
     const want = Math.abs(v * dt);
     if (blockedBy || (want > 0.02 && moved < want * 0.5)) {
@@ -1441,6 +1503,7 @@ export class WorldApp {
     d.v = v;
     this.speed = Math.abs(v);
     pos.y = this.floorY;
+    updateWheels(d.mesh, v, dt, -ix * 0.45 * Math.sign(v || 1));
     // Chase camera swings in behind the car while driving.
     if (Math.abs(v) > 1 && (!this._dragAt || performance.now() - this._dragAt > 1500)) {
       let diff = this.player.rotation.y - Math.PI - this.cam.yaw;
@@ -1764,7 +1827,7 @@ export class WorldApp {
       const fz = Math.cos(c.g.rotation.y);
       let gap = Infinity;
       let playerGap = Infinity;
-      const look = 6 + (c.v ?? c.speed) * 2.2;
+      const look = 6 + (c.v ?? c.speed) * 2.2 + c.len / 2;
       const check = (x, z, halfLen, lat) => {
         const dx = x - gx;
         const dz = z - gz;
@@ -1778,7 +1841,13 @@ export class WorldApp {
         gap = playerGap;
       }
       for (const p of this.crowd) if (p.ref !== this.player) gap = Math.min(gap, check(p.x, p.z, 2.6, 1.6));
-      for (const o of this.cars) if (o !== c) gap = Math.min(gap, check(o.g.position.x, o.g.position.z, 5.2, 1.4));
+      for (const o of this.cars) if (o !== c) gap = Math.min(gap, check(o.g.position.x, o.g.position.z, (o.len + c.len) / 2 + 0.6, 1.4));
+      // Junction box taken by someone else: stop at the line.
+      if (c.pi >= c.path.length - 1 && c.b.lock && c.b.lock !== c) {
+        const E = c.path[c.path.length - 1];
+        gap = Math.min(gap, Math.hypot(E.x - gx, E.z - gz) - 0.4);
+        c.wait += dt;
+      }
       const v = c.v ?? c.speed;
       // Speed that still stops ~1 m short of the obstacle at 7 m/s² braking.
       const safe = Math.sqrt(2 * 7 * Math.max(0, gap - 1));
@@ -1800,17 +1869,7 @@ export class WorldApp {
           this.hud.toast('Beep beep! A driver is waiting for you to get out of the road', '🚗');
         }
       }
-      const saved = c.speed;
-      c.speed = c.v;
-      step(c, (x, z, ry) => {
-        // Round the corners: steer smoothly onto the next street instead of
-        // snapping, and keep the car on the asphalt (y = road surface).
-        c.g.position.set(x, 0.01, z);
-        let diff = ry - c.g.rotation.y;
-        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-        c.g.rotation.y += diff * Math.min(1, dt * 5);
-      });
-      c.speed = saved;
+      this._driveTraffic(c, c.v * dt, dt);
     }
   }
 
