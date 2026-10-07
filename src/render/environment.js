@@ -132,8 +132,9 @@ export class PostFX {
 
   setNight(night) {
     if (!this.enabled) return;
-    this.bloom.strength = 0.18 + night * 0.75;
-    this.bloom.threshold = 0.9 - night * 0.35;
+    // Gentle at night: neon should glow, not blind.
+    this.bloom.strength = 0.16 + night * 0.3;
+    this.bloom.threshold = 0.92 - night * 0.12;
   }
 
   render(scene, camera) {

@@ -27,7 +27,7 @@ export function scorePlace(place, words) {
   const hay = new Set([...name.split(' '), place.kind, ...(place.tags || []).flatMap((t) => norm(t).split(' '))]);
   let score = 0;
   for (const w of words) {
-    if (name.includes(w) && w.length > 2) score += 3;
+    if (w.length > 2 && name.split(' ').some((nw) => nw === w || (w.length > 3 && nw.startsWith(w)))) score += GENERIC.has(w) ? 1 : 3;
     if (hay.has(w)) score += GENERIC.has(w) ? 1 : 2;
     else if (w.length > 3 && [...hay].some((h) => h.startsWith(w) || w.startsWith(h))) score += 1;
   }

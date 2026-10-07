@@ -11,7 +11,7 @@ import { Environment, PostFX } from '../render/environment.js';
 import { loadModel, fitObject, assetErrors } from '../render/assets.js';
 import { PLACES, PARCELS, BILLBOARDS, AGENTS, TOKENS, PLAZA, DISTRICT, FILLER_CELLS, WORLD, cellBounds, entrancePoint, footprint, zoneAt, facingVector } from '../config/nova-city.js';
 import { ECONOMY } from '../config/economy.js';
-import { TOOLS, RESIDENTS, FACULTIES } from '../pludor/demo-data.js';
+import { TOOLS, RESIDENTS, FACULTIES, NPC_PERSONAS } from '../pludor/demo-data.js';
 import { SpatialGrid } from '../core/spatial-grid.js';
 import { NavGrid } from '../core/pathfind.js';
 import { Obstacles, separate, steer } from '../core/obstacles.js';
@@ -29,7 +29,9 @@ const BOT_ANCHORS = {
 };
 
 export class WorldApp {
-  constructor(root, { api, transport, flags, me, spawn = null, mode = 'embedded' }) {
+  constructor(root, { api, transport, flags, me, spawn = null, mode = 'embedded', llm = null }) {
+    this.llm = llm;
+    this.npcChats = new Map();
     this.spawn = spawn;
     this.mode = mode;
     this.root = root;
@@ -178,7 +180,7 @@ export class WorldApp {
     const gltf = await loadModel('car');
     const src = gltf.scene.clone(true);
     src.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(src);
+    const box = new THREE.Box3().setFromObject(src, true);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
     const head = new THREE.Box3();
@@ -189,7 +191,7 @@ export class WorldApp {
     const holder = new THREE.Group();
     holder.add(src);
     holder.rotation.y = alongX ? (sign > 0 ? -Math.PI / 2 : Math.PI / 2) : sign > 0 ? 0 : Math.PI;
-    this.carTemplate = fitObject(holder, 4.5);
+    this.carTemplate = fitObject(holder, 4.5, true);
   }
 
   recolorPlayer(color) {
@@ -253,6 +255,15 @@ export class WorldApp {
       this.scene.add(av);
       this.walkers.push({ av, ring, seg: k % n, t: (k * 0.29) % 1, speed: 1.1 + (k % 4) * 0.12 });
     }
+    // Some passers-by are people you can stop and talk to (AI-driven).
+    this.npcs = new Map();
+    this.walkers.forEach((w, i) => {
+      const p = NPC_PERSONAS[i];
+      if (!p) return;
+      w.persona = p;
+      w.av.userData.personRef = { type: 'npc', id: p.id };
+      this.npcs.set(p.id, { persona: p, av: w.av, walker: w });
+    });
     // People chatting in small groups near the terraces and the hub.
     this.idlers = [];
     const groups = [[-19, -6], [-19, 15], [17, 4], [6, -24], [-9, 22]];
@@ -354,6 +365,7 @@ export class WorldApp {
       this.keys.add(k);
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) this.cancelNav();
       if (k === 'e' && !e.repeat) this.hud.primaryAction();
+      if (k === 'f' && !e.repeat && this.driving) this.stopDriving();
       if (k === 'm' && !e.repeat) this.sheets.open('map');
       if (k === 'escape') this.sheets.close();
       if (k === '/' && !e.repeat) {
@@ -416,12 +428,13 @@ export class WorldApp {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
-    const avatars = [...this.peers.values(), ...this.bots.values()].map((p) => p.avatar).concat(this.agents.map((a) => a.avatar));
+    const avatars = [...this.peers.values(), ...this.bots.values()].map((p) => p.avatar).concat(this.agents.map((a) => a.avatar), [...(this.npcs?.values() || [])].map((n) => n.av).filter((a) => a.visible));
     const hits = this.raycaster.intersectObjects([...this.city.pickables, ...avatars], true);
     for (const h of hits) {
       let o = h.object;
       while (o && !o.userData.ref && !o.userData.personRef) o = o.parent;
       if (!o) continue;
+      if (o.userData.personRef?.type === 'npc') return this.sheets.open('npc', { id: o.userData.personRef.id });
       if (o.userData.personRef) return this.openRef(o.userData.personRef);
       if (o.userData.ref.type === 'place' && this.interiorSpec('place', o.userData.ref.id)) return this.visitPlace(o.userData.ref.id);
       return this.openRef(o.userData.ref);
@@ -457,7 +470,7 @@ export class WorldApp {
     const p = this.player.position;
     const prof = this.state.profile || {};
     this.transport.publishState({
-      profile: { handle: prof.handle, displayName: prof.displayName, color: prof.color, skin: this.me.skin, presence: prof.presence, roles: prof.roles, bio: prof.bio, avatar: this.player.userData.person, look: this.player.userData.look || null },
+      profile: { handle: prof.handle, displayName: prof.displayName, color: prof.color, skin: this.me.skin, presence: prof.presence, roles: prof.roles, bio: prof.bio, avatar: this.player.userData.person, look: this.player.userData.look || null, dating: this.datingOn() },
       x: +p.x.toFixed(2), z: +p.z.toFixed(2), ry: +this.player.rotation.y.toFixed(2), moving: this.speed > 0.1, emote: this.emote, inside: this.inside?.key || null,
     });
   }
@@ -592,14 +605,14 @@ export class WorldApp {
     if (here) {
       for (const [id] of this.peers) {
         const p = this.transport.getPeer(id);
-        if (p && (p.inside || null) === here) out.push({ id, name: p.handle, displayName: p.displayName, presence: p.presence, color: p.color, x: p.x, z: p.z });
+        if (p && (p.inside || null) === here) out.push({ id, name: p.handle, displayName: p.displayName, presence: p.presence, color: p.color, x: p.x, z: p.z, dating: !!p.dating });
       }
       return out;
     }
-    for (const b of this.bots.values()) out.push({ id: b.id, name: b.handle, displayName: b.displayName, presence: b.presence, color: b.color, x: b.avatar.position.x, z: b.avatar.position.z, bot: true });
+    for (const b of this.bots.values()) out.push({ id: b.id, name: b.handle, displayName: b.displayName, presence: b.presence, color: b.color, x: b.avatar.position.x, z: b.avatar.position.z, bot: true, dating: !!RESIDENTS.find((r) => r.id === b.id)?.dating });
     for (const [id] of this.peers) {
       const p = this.transport.getPeer(id);
-      if (p && !p.inside) out.push({ id, name: p.handle, displayName: p.displayName, presence: p.presence, color: p.color, x: p.x, z: p.z });
+      if (p && !p.inside) out.push({ id, name: p.handle, displayName: p.displayName, presence: p.presence, color: p.color, x: p.x, z: p.z, dating: !!p.dating });
     }
     return out;
   }
@@ -610,7 +623,7 @@ export class WorldApp {
     const open = !p.hours || (t.hoursF >= p.hours[0] && t.hoursF < (p.hours[1] > 24 ? 24 : p.hours[1]));
     return {
       ...p, open, entrance: entrancePoint(p),
-      kindLabel: { cafe: 'Café', restaurant: 'Restaurant', market: 'Market', creator: 'Creator Hub', community: 'Signals community', education: 'University', ai: 'AI Studio', games: 'Arcade', transit: 'Transit hub', media: 'Cinema', store: 'Store', service: 'Service', tools: 'Free tools', foodcourt: 'Food court', hotel: 'Hotel', conference: 'Conference center', cowork: 'Cowork space', supermarket: 'Supermarket', apartments: 'Apartments' }[p.kind] || p.kind,
+      kindLabel: { cafe: 'Café', restaurant: 'Restaurant', market: 'Market', creator: 'Creator Hub', community: 'Signals community', education: 'University', ai: 'AI Studio', games: 'Arcade', transit: 'Transit hub', media: 'Cinema', store: 'Store', service: 'Service', tools: 'Free tools', nightclub: 'Nightclub & bar · 18+', dealer: 'Car dealership', foodcourt: 'Food court', hotel: 'Hotel', conference: 'Conference center', cowork: 'Cowork space', supermarket: 'Supermarket', apartments: 'Apartments' }[p.kind] || p.kind,
       commerce: ['cafe', 'restaurant', 'store'].includes(p.kind),
       bookable: p.kind === 'service' && p.link.id !== 'lb_fixit_repair',
       rating: { biz_casa_nova: 4.7, biz_daily_grind: 4.7, biz_ember_grill: 4.6, biz_kicks_co: 4.8, biz_lumi_salon: 4.9, lb_fixit_repair: 4.1 }[p.link.id],
@@ -708,8 +721,7 @@ export class WorldApp {
       case 'spot':
         return this.focus?.acts?.[0]?.run();
       case 'mycar':
-        this.hud.toast('Hop in — pick where to drive', '🚗');
-        return this.sheets.open('map');
+        return this.startDriving(ref.id);
       default:
     }
   }
@@ -720,6 +732,14 @@ export class WorldApp {
     this.api.gamification.track(EV.ENTERED_BUSINESS, { placeId: id, businessId: p.link.id }).then((r) => this.hud.showProgress(r)).catch(() => {});
     this.api.analytics.track('building_entry', { placeId: id });
     this.sheets.open('place', { id });
+  }
+
+  isAdult() {
+    return !!this.state.profile?.adult;
+  }
+
+  datingOn() {
+    return this.isAdult() && !!this.state.profile?.dating;
   }
 
   // Cars bought in the Pludor Store park outside your home.
@@ -767,6 +787,96 @@ export class WorldApp {
 
   onVirtualOwned() {
     this._parkMyCars();
+  }
+
+  // ───── drive mode: your vehicle carries you through the streets ─────
+  _vehicleMesh(item) {
+    if (item.vehicle === 'car' && this.carTemplate) {
+      const g = this.carTemplate.clone(true);
+      g.traverse((o) => {
+        if (o.isMesh && /paint/i.test(o.material.name)) {
+          o.material = o.material.clone();
+          o.material.color.set(item.color);
+          if (item.id === 'car-aether') {
+            o.material.metalness = 1;
+            o.material.roughness = 0.12;
+          }
+        }
+      });
+      return g;
+    }
+    // Scooter / e-bike / fallback: a light procedural frame with wheels.
+    const g = new THREE.Group();
+    const mat = new THREE.MeshStandardMaterial({ color: item.color, metalness: 0.5, roughness: 0.35 });
+    const dark = new THREE.MeshStandardMaterial({ color: '#111', roughness: 0.6 });
+    if (item.vehicle === 'car') {
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.9, 4.3), mat);
+      body.position.y = 0.75;
+      g.add(body);
+      return g;
+    }
+    const big = item.vehicle === 'bike' ? 0.34 : 0.14;
+    for (const z of [-0.55, 0.55]) {
+      const w = new THREE.Mesh(new THREE.TorusGeometry(big, 0.04, 8, 20), dark);
+      w.rotation.y = Math.PI / 2;
+      w.position.set(0, big, z);
+      g.add(w);
+    }
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.06, 1.0), mat);
+    deck.position.y = big + (item.vehicle === 'bike' ? 0.25 : 0.02);
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.0), mat);
+    stem.position.set(0, big + 0.5, 0.5);
+    stem.rotation.x = -0.2;
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.04, 0.04), dark);
+    bar.position.set(0, big + 1.0, 0.6);
+    g.add(deck, stem, bar);
+    return g;
+  }
+
+  startDriving(itemId) {
+    const item = (ECONOMY.virtualItems || []).find((i) => i.id === itemId);
+    if (!item || !(this.state.wallet?.owned || []).includes(itemId)) return this.sheets.open('vstore');
+    if (this.inside) return this.hud.toast('Step outside to drive', '🚗');
+    if (this.driving) this.stopDriving();
+    const mesh = this._vehicleMesh(item);
+    mesh.traverse((o) => o.isMesh && (o.castShadow = true));
+    this.player.add(mesh);
+    const isCar = item.vehicle === 'car';
+    const h = this.player.userData.human;
+    if (isCar) {
+      if (h) h.model.visible = false;
+      if (this.player.userData.parts) this.player.userData.parts.rig.visible = false;
+    } else if (h) h.model.position.y = item.vehicle === 'bike' ? 0.32 : 0.12;
+    this.driving = { item, mesh, isCar };
+    const parked = this.myCars?.find((g) => g.userData.ref.id === itemId);
+    if (parked) parked.visible = false;
+    if (parked) this.player.position.set(parked.position.x, this.floorY, parked.position.z);
+    this.cam.dist = Math.max(this.cam.dist, isCar ? 10 : 7);
+    this.hud.setDriving?.(item);
+    this.hud.toast(`${item.icon} ${item.name} — WASD to drive, F to park`, '🚗');
+  }
+
+  stopDriving() {
+    const d = this.driving;
+    if (!d) return;
+    this.player.remove(d.mesh);
+    const h = this.player.userData.human;
+    if (h) {
+      h.model.visible = true;
+      h.model.position.y = 0;
+    }
+    if (this.player.userData.parts) this.player.userData.parts.rig.visible = true;
+    const parked = this.myCars?.find((g) => g.userData.ref.id === d.item.id);
+    if (parked) {
+      // Park where you stopped, beside you.
+      const side = new THREE.Vector3(1, 0, 0).applyQuaternion(this.player.quaternion);
+      parked.position.set(this.player.position.x + side.x * 2.4, 0.2, this.player.position.z + side.z * 2.4);
+      parked.rotation.y = this.player.rotation.y;
+      parked.visible = true;
+      this._grid?.upsert(`mycar:${d.item.id}`, parked.position.x, parked.position.z, { ref: parked.userData.ref, label: `Your ${d.item.name}`, r: 4 });
+    }
+    this.driving = null;
+    this.hud.setDriving?.(null);
   }
 
   // ───────────────────────── avatar studio ─────────────────────────
@@ -875,6 +985,10 @@ export class WorldApp {
         extra.courses = (this.state.courses || []).map((c) => ({ title: c.title, minutes: c.minutes || c.durationMin, faculty: c.faculty, done: c.completed }));
         extra.faculties = FACULTIES;
       }
+      if (spec.kind === 'dealer') {
+        extra.showroom = (ECONOMY.virtualItems || []).filter((i) => i.vehicle === 'car').sort((a, b) => b.points - a.points).slice(0, 3);
+        extra.carTemplate = this.carTemplate;
+      }
       if (spec.kind === 'cinema' || spec.kind === 'conference') extra.liveHandles = [...this.bots.values()].map((b) => b.handle).concat(['kemi', 'dev', 'ines']).slice(0, 6);
     } catch {
       /* boards fall back to defaults */
@@ -883,7 +997,8 @@ export class WorldApp {
   }
 
   _unitSig(spec) {
-    return (spec.units || []).map((u) => `${u.id}:${u.status}:${u.building?.businessName || ''}:${u.mine ? 1 : 0}`).join('|');
+    const b = (u) => u.building?.brand ? `${u.building.brand.color}${u.building.brand.tagline}${(u.building.brand.logo || '').length}${(u.building.brand.logo || '').slice(-12)}` : '';
+    return (spec.units || []).map((u) => `${u.id}:${u.status}:${u.building?.businessName || ''}:${u.mine ? 1 : 0}:${b(u)}`).join('|') + (spec.decor || []).join(',');
   }
 
   async _ensureInterior(spec) {
@@ -950,7 +1065,12 @@ export class WorldApp {
     if (type === 'apt' && spec && !tour && !this.state.parcels.find((x) => x.id === id)?.mine) return this.hud.toast("That's someone else's home", '🚪');
     if (!spec) return type === 'place' ? this.enterPlace(id) : this.sheets.open('parcel', { id });
     if (this._doorBusy || this.inside?.key === spec.key) return;
+    if (spec.place?.ageRestricted && !this.isAdult()) {
+      this.hud.toast('18+ venue. Add your birth year in Settings to enter.', '🔞');
+      return this.sheets.open('settings');
+    }
     this._doorBusy = true;
+    this.stopDriving();
     const entry = await this._ensureInterior(spec);
     this.hud.fade(() => {
       if (this.inside) this._leaveInterior();
@@ -1171,7 +1291,7 @@ export class WorldApp {
       }
     }
     const len = Math.hypot(dx, dz);
-    const target = len ? (run || this.nav ? 6.5 : 3.8) : 0;
+    const target = len ? (this.driving ? this.driving.item.speed * (run ? 1 : 0.8) : run || this.nav ? 6.5 : 3.8) : 0;
     this.speed += (target - this.speed) * Math.min(1, dt * 10);
     if (len > 0.01) {
       dx /= len;
@@ -1179,8 +1299,9 @@ export class WorldApp {
       const nx = pos.x + dx * this.speed * dt;
       const nz = pos.z + dz * this.speed * dt;
       let res = this._collide(nx, nz, pos.x, pos.z);
-      if (!this.inside) res = this.obstacles.resolve(res.x, res.z, 0.38);
-      res = separate(res.x, res.z, 0.32, this.crowd, this.player);
+      const pr = this.driving?.isCar ? 1.2 : 0.38;
+      if (!this.inside) res = this.obstacles.resolve(res.x, res.z, pr);
+      res = separate(res.x, res.z, this.driving?.isCar ? 1.1 : 0.32, this.crowd, this.player);
       // Never let separation shove the player into a wall.
       const back = this._collide(res.x, res.z, pos.x, pos.z);
       pos.x = back.x;
@@ -1191,7 +1312,7 @@ export class WorldApp {
       this.player.rotation.y += diff * Math.min(1, dt * 12);
     }
     pos.y = this.floorY;
-    animateAvatar(this.player, t, this.speed / 6, this.emote);
+    animateAvatar(this.player, t, this.driving ? 0 : this.speed / 6, this.emote);
     if (this.inside) {
       const l = this._toLocal(this.inside, pos.x, pos.z);
       if (l.z > this.inside.built.d / 2 - 0.15 && Math.abs(l.x) < 1.4 && !this._doorBusy) this.exitBuilding();
@@ -1348,6 +1469,7 @@ export class WorldApp {
       const dirZ = (b[1] - a[1]) / len;
       const near = Math.hypot(av.position.x - ppos.x, av.position.z - ppos.z) < 70;
       const st = near ? steer(av.position.x, av.position.z, dirX, dirZ, this.obstacles, this.crowd, av) : { lateral: 0, slow: 1 };
+      if (w.persona && this.talkingNpc === w.persona.id) st.slow = 0; // stops to chat
       w.lat = (w.lat || 0) + (st.lateral - (w.lat || 0)) * Math.min(1, dt * 2.5);
       w.slow = (w.slow ?? 1) + (st.slow - (w.slow ?? 1)) * Math.min(1, dt * 6);
       const saved = w.speed;
@@ -1360,14 +1482,15 @@ export class WorldApp {
           ({ x: px, z: pz } = separate(px, pz, 0.3, this.crowd, av));
         }
         av.position.set(px, 0.2, pz);
-        let diff = ry - av.rotation.y;
+        const chatting = w.persona && this.talkingNpc === w.persona.id;
+        let diff = (chatting ? Math.atan2(ppos.x - px, ppos.z - pz) : ry) - av.rotation.y;
         diff = Math.atan2(Math.sin(diff), Math.cos(diff));
         av.rotation.y += diff * Math.min(1, dt * 8);
       });
       const moved = w.speed;
       w.speed = saved;
       av.visible = near && !this.inside;
-      if (av.visible) animateAvatar(av, t, moved / 6);
+      if (av.visible) animateAvatar(av, t, moved / 6, w.persona && this.talkingNpc === w.persona.id && moved < 0.2 ? 'talk' : null);
     }
     // Only people near the camera cast shadows (big draw-call saving).
     if (!this._shadowT || t - this._shadowT > 0.5) {
@@ -1424,7 +1547,7 @@ export class WorldApp {
       const target = Math.min(c.speed, safe);
       c.v = target < v ? Math.max(target, v - 14 * dt) : Math.min(target, v + 2.5 * dt);
       const braking = target < v - 0.3 || c.v < 0.2;
-      if (c.brake) c.brake.emissiveIntensity = braking ? 3.5 : 0.35 + (1 - (this.daylight ?? 1)) * 0.8;
+      if (c.brake) c.brake.emissiveIntensity = braking ? 1.8 : 0.3 + (1 - (this.daylight ?? 1)) * 0.5;
       // Honk when the player is what's stopping us.
       c.blockedFor = playerGap < 14 && c.v < 3 ? c.blockedFor + dt : 0;
       const closeCall = playerGap < 9 && v > 4;
@@ -1517,6 +1640,11 @@ export class WorldApp {
       for (const a of AGENTS) this._grid.upsert(`agent:${a.id}`, a.x, a.z, { ref: { type: 'agent', id: a.id }, label: `${a.name} · ${a.role}`, r: 4.5 });
       for (const g of this.myCars || []) this._grid.upsert(`mycar:${g.userData.ref.id}`, g.position.x, g.position.z, { ref: g.userData.ref, label: 'Your car', r: 4 });
       this._grid.upsert('plaza', 0, 0, { ref: { type: 'plaza', id: PLAZA.id }, label: 'Central Plaza fountain', r: 8.5 });
+    }
+    if (!this.inside) for (const [id, n] of this.npcs || []) {
+      const ap = n.av.position;
+      if (n.av.visible && Math.hypot(ap.x - pp.x, ap.z - pp.z) < 20) this._grid.upsert(`npc:${id}`, ap.x, ap.z, { ref: { type: 'npc', id }, label: n.persona.name, sub: n.persona.job, r: 2.6, persona: n.persona });
+      else this._grid.remove(`npc:${id}`);
     }
     for (const p of this.people()) this._grid.upsert(`player:${p.id}`, p.x, p.z, { ref: { type: 'player', id: p.id }, label: `@${p.name}`, r: PROX.approachRadius, person: p });
     for (const id of [...this._grid.items.keys()]) {
@@ -1617,7 +1745,7 @@ export class WorldApp {
       this.sun.intensity = 0.4;
       this._sunDir = new THREE.Vector3(20, 90, 30);
       this.renderer.toneMappingExposure = this.env ? 0.62 : 0.9;
-      this.post.setNight(0.6);
+      this.post.setNight(0.25);
       if (this.inside.built.streetMat) this.inside.built.streetMat.color.set(d > 0.3 ? '#d7ebf7' : '#1b2740');
       return;
     }
@@ -1647,7 +1775,7 @@ export class WorldApp {
       this._sunDir = d > 0.02 ? new THREE.Vector3(Math.cos(ang) * 80, 30 + Math.sin(ang) * 80, 40) : new THREE.Vector3(-40, 90, -30);
       this.renderer.toneMappingExposure = 0.85 + d * 0.25;
     }
-    for (const m of this.carLights) m.emissiveIntensity = 0.3 + night * 3;
+    for (const m of this.carLights) m.emissiveIntensity = 0.3 + night * 1.2;
     this.post.setNight(night);
   }
 

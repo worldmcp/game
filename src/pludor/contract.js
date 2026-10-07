@@ -25,7 +25,7 @@ export const CONTRACT = {
   messaging: ['getConversation', 'listConversations', 'send'],
   voice: ['requestCall', 'respondCall', 'endCall'],
   commerce: ['getBusiness', 'checkout', 'book', 'getOrders', 'buyListing', 'listListings', 'createListing'],
-  business: ['claim', 'feedback', 'addProduct', 'removeProduct', 'mine'],
+  business: ['claim', 'feedback', 'addProduct', 'removeProduct', 'mine', 'setBrand'],
   orders: ['incoming', 'accept', 'reject', 'ready', 'cancel', 'collect', 'track'],
   delivery: ['jobs', 'accept', 'pickup', 'dropoff'],
   economy: ['treasury', 'fees', 'serviceCategories'],

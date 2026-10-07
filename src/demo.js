@@ -15,6 +15,7 @@ import { worldTimeAt } from './core/world-time.js';
 import { mountPludorWorld, DemoPludorAdapter, HttpPludorAdapter, browserStorage, LocalPresenceTransport, resolveGuestIdentity, resolveFlags } from './index.js';
 import { WsPresenceTransport } from './net/ws-transport.js';
 import { localizeWorld, detectCountry } from './config/locale.js';
+import { samplingLlm, serverLlm } from './core/llm.js';
 import * as DEMO_DATA from './pludor/demo-data.js';
 
 const params = new URLSearchParams(location.search);
@@ -164,6 +165,14 @@ async function logout() {
   location.reload();
 }
 
+// Published as a Claude artifact, characters talk through the viewer's Claude
+// (asked once for consent). Elsewhere this resolves null and they're scripted.
+function hostLlm() {
+  const c = window.claude;
+  if (!c?.use) return null;
+  return samplingLlm(c.use('sample').catch(() => null));
+}
+
 async function bootOnline() {
   const user = (await currentUser()) || (await authScreen());
   const adapter = new HttpPludorAdapter({ apiBase: '/api', rpc: true, getToken: () => store.get(), onUnauthorized: () => logout() });
@@ -180,7 +189,7 @@ async function bootOnline() {
   });
   const spawn = await Promise.race([transport.ready, new Promise((r) => setTimeout(() => r(null), 8000))]);
   const me = { id: user.id, handle: user.handle, displayName: user.displayName, color: user.color, skin: '#c68642' };
-  const app = await mountPludorWorld(el, { adapter, transport, me, flags, spawn, mode: 'online' });
+  const app = await mountPludorWorld(el, { adapter, transport, me, flags, spawn, mode: 'online', llm: hostLlm() || serverLlm('', () => store.get()) });
   if (app) app.logout = logout;
   window.pludorWorld = app;
 }
@@ -196,8 +205,9 @@ async function bootOffline() {
   }
   const me = resolveGuestIdentity(location.search, window.sessionStorage);
   const transport = flags.WORLD_MULTIPLAYER_ENABLED ? new LocalPresenceTransport({ self: me }) : null;
-  const adapter = new DemoPludorAdapter({ user: me, storage: browserStorage(window.localStorage, window), transport });
-  const app = await mountPludorWorld(el, { adapter, transport, me, flags, mode: 'offline' });
+  const llm = hostLlm();
+  const adapter = new DemoPludorAdapter({ user: me, storage: browserStorage(window.localStorage, window), transport, llm });
+  const app = await mountPludorWorld(el, { adapter, transport, me, flags, mode: 'offline', llm });
   window.pludorWorld = app;
   banner('Offline demo · progress is saved in this browser only', 'info');
   setTimeout(() => banner(null), 6000);

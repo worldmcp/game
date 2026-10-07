@@ -22,7 +22,7 @@ const PICKUP_RADIUS = 14;
 const DROPOFF_RADIUS = 14;
 const SITE_RADIUS = 20;
 
-export const PLAYER_BIZ_CATEGORIES = { restaurant: 'Restaurant', shop: 'Shop', service: 'Services' };
+export const PLAYER_BIZ_CATEGORIES = { restaurant: 'Restaurant', shop: 'Shop', service: 'Services', accommodation: 'Accommodation' };
 export const SERVICE_CATEGORIES = {
   'home-services': { label: 'Home services', skill: 'communication', examples: ['Mow my lawn', 'Clean my house', 'Fix a leaking tap'] },
   writing: { label: 'Writing', skill: 'marketing', examples: ['Write ad copy for my shop', 'Write product descriptions'] },
@@ -80,6 +80,27 @@ export function bindEconomyChain(A) {
     const place = PLACES.find((p) => p.link?.id === businessId);
     return { ...biz, pickupPoint: place ? entrancePoint(place) : null };
   };
+
+  // Brand shown on the business's signs (storefront, stall, booth, desk).
+  // logo: an emoji, or a small uploaded image as a data URL (production: the
+  // business's logo from its Pludor profile).
+  A._notifyUser = (userId, evt) => notifyUser(userId, evt);
+
+  A.business.setBrand = A._wrap((parcelId, spec = {}) => {
+    const color = /^#[0-9a-f]{6}$/i.test(String(spec.color || '')) ? String(spec.color) : '#7c5cff';
+    let logo = String(spec.logo || '').trim();
+    if (logo.startsWith('data:')) {
+      if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(logo) || logo.length > 48000) throw new PludorError('invalid', 'Logo must be a PNG, JPEG or WebP under ~35 KB.');
+    } else logo = [...logo].slice(0, 2).join('');
+    const tagline = String(spec.tagline || '').replace(/[<>]/g, '').trim().slice(0, 48);
+    return A._mutateWorld((w) => {
+      const p = w.parcels[parcelId];
+      if (!p || p.tenantId !== A.me.id) throw new PludorError('forbidden', "You don't own this business.");
+      if (!p.businessName) throw new PludorError('invalid', 'Open your business first.');
+      p.brand = { logo, color, tagline };
+      return p.brand;
+    });
+  });
 
   A.business.addProduct = A._wrap((parcelId, spec = {}) => {
     const name = String(spec.name || '').replace(/[<>]/g, '').trim().slice(0, 40);

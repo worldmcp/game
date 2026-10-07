@@ -46,6 +46,7 @@ export class LocalPresenceTransport {
         bio: String(p.bio || '').slice(0, 140),
         avatar: /^[a-z0-9_]{3,40}$/.test(p.avatar) ? p.avatar : null,
         look: sanitizeLook(p.look),
+        dating: !!p.dating,
         x: Number(msg.x) || 0,
         z: Number(msg.z) || 0,
         ry: Number(msg.ry) || 0,

@@ -9,6 +9,7 @@
 import { ECONOMY } from '../config/economy.js';
 import { PARCELS, PLACES, TOKENS, UNIT_SEEDS, WORLD } from '../config/nova-city.js';
 import { sanitizeLook, enforceOwnership } from '../core/look.js';
+import { chatAs } from '../core/llm.js';
 import * as D from './demo-data.js';
 import { CLIENT_REPORTABLE_EVENTS, PludorError } from './contract.js';
 import { awardXp, checkAchievements, levelForXp, nextRank, rankFor } from '../core/progression.js';
@@ -23,6 +24,22 @@ const money = (n) => Math.round(n * 100) / 100;
 const rid = (p) => `${p}_${Math.random().toString(36).slice(2, 10)}`;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const BOT_IDS = new Set(D.RESIDENTS.map((r) => r.id));
+// Services and stays a player business sells become bookable time slots.
+function playerServices(p, t) {
+  if (!['service', 'accommodation'].includes(p.category)) return {};
+  const stay = p.category === 'accommodation';
+  const services = (p.catalog || []).map((c) => ({ id: c.sku, name: c.name, price: c.price, icon: c.icon, durationMin: stay ? 1440 : 60 }));
+  const slots = [];
+  for (let i = 1; slots.length < 5 && i < 30; i++) {
+    const h = Math.floor(t.hoursF) + i;
+    if (stay ? h % 24 === 14 || h % 24 === 15 : (h % 24 >= 9 && h % 24 <= 20)) slots.push({ id: `d${t.day + Math.floor(h / 24)}h${h % 24}`, label: `${h >= 24 ? 'Tomorrow ' : ''}${((h % 24) + 11) % 12 + 1}:00 ${h % 24 < 12 ? 'AM' : 'PM'}${stay ? ' check-in' : ''}` });
+  }
+  return services.length ? { services, slots, reservations: stay } : {};
+}
+
+export function isAdult(profile, now = Date.now(), minAge = 18) {
+  return !!profile?.birthYear && new Date(now).getUTCFullYear() - profile.birthYear >= minAge;
+}
 const ZONING_TEMPLATES = {
   residential: ['home'],
   commercial: ['storefront', 'studio'],
@@ -69,7 +86,8 @@ export function browserStorage(ls, win) {
 }
 
 export class DemoPludorAdapter {
-  constructor({ user, economy = ECONOMY, storage = memoryStorage(), transport = null, now = () => Date.now(), schedule = (ms, fn) => setTimeout(fn, ms) }) {
+  constructor({ user, economy = ECONOMY, storage = memoryStorage(), transport = null, now = () => Date.now(), schedule = (ms, fn) => setTimeout(fn, ms), llm = null }) {
+    this.llm = llm; // optional conversational AI for demo residents
     this.me = user;
     this.eco = economy;
     this.store = storage;
@@ -296,6 +314,39 @@ export class DemoPludorAdapter {
     return applyNeedEffects(st.needs, { hunger: 30, fun: 4 }, this.now(), this.eco.needs, this.eco.time);
   }
 
+  // Real appointments with a player-run service or accommodation business:
+  // the customer pays now, the owner is paid minus the platform fee, and both
+  // see the booking (production: Pludor bookings / calendar).
+  _bookPlayer(businessId, serviceId, slotId) {
+    const parcelId = businessId.slice(3);
+    const p = this._world().parcels[parcelId];
+    if (!p?.businessName) throw new PludorError('not_found', 'Business not found.');
+    const svc = playerServices(p, this._time()).services.find((s) => s.id === serviceId);
+    if (!svc) throw new PludorError('not_found', 'Service not found.');
+    if (!/^d-?\d+h\d+$/.test(String(slotId))) throw new PludorError('invalid_slot', 'Pick a time slot.');
+    if (p.tenantId === this.me.id) throw new PludorError('own_business', "You can't book your own business.");
+    const fee = money(svc.price * (this.eco.fees.commerce ?? 0.05));
+    const res = this._mutate((st) => {
+      if (st.bookings.some((b) => b.slotId === slotId && b.businessId === businessId && b.serviceId === serviceId)) throw new PludorError('duplicate', 'You already booked that slot.');
+      if (svc.price > 0) this._debit(st, svc.price, 'booking', `${p.businessName} · ${svc.name}`);
+      const booking = { id: rid('bk'), businessId, businessName: p.businessName, serviceId, serviceName: svc.name, price: svc.price, slotId, status: 'confirmed', ts: this.now() };
+      st.bookings.unshift(booking);
+      st.reputation.ordersCompleted += 1;
+      return { booking, progress: this._awardAndNotify('PLAYER_BOOKED', { businessId, serviceId }, st) };
+    });
+    if (svc.price > 0) {
+      this._mutate((st) => this._credit(st, money(svc.price - fee), 'sale', `Booking · ${svc.name} · ${this._load().profile.displayName}`), p.tenantId);
+      this._mutateWorld((w) => {
+        const t = (w.treasury ||= { total: 0, byType: {} });
+        t.total = money(t.total + fee);
+        t.byType.bookings = money((t.byType.bookings || 0) + fee);
+      });
+    }
+    this._notifyUser?.(p.tenantId, { kind: 'merchant-order', status: 'booked', businessName: p.businessName });
+    this._flush();
+    return res;
+  }
+
   _reputation(st) {
     const r = st.reputation;
     const score = clamp(40 + r.gigsCompleted * 8 + r.ordersCompleted * 1 + r.courses * 5 + r.hires * 2 + st.relationships.friends.length - r.reportsAgainst * 15, 0, 100);
@@ -406,7 +457,7 @@ export class DemoPludorAdapter {
     this.identity = {
       getCurrentUser: T(() => {
         const st = A._load();
-        return { ...st.profile, reputation: A._reputation(st) };
+        return { ...st.profile, adult: isAdult(st.profile, A.now(), A.eco.ageGate?.adult ?? 18), reputation: A._reputation(st) };
       }),
       getUser: T((id) => A._userSummary(id)),
       updateProfile: T((patch) => {
@@ -425,6 +476,15 @@ export class DemoPludorAdapter {
             st.profile[k] = v;
           }
           if ('look' in patch) st.profile.look = enforceOwnership(sanitizeLook(patch.look), st.owned || []);
+          // Self-declared here; production uses Pludor's verified age.
+          if ('birthYear' in patch) {
+            const y = Math.floor(Number(patch.birthYear));
+            const now = new Date(A.now()).getUTCFullYear();
+            if (y >= 1900 && y <= now - 13) st.profile.birthYear = y;
+          }
+          const adult = isAdult(st.profile, A.now(), A.eco.ageGate?.adult ?? 18);
+          if ('dating' in patch) st.profile.dating = !!patch.dating && adult;
+          if (!adult) st.profile.dating = false;
         });
         A._notify({ kind: 'state' });
         return A._load().profile;
@@ -569,12 +629,22 @@ export class DemoPludorAdapter {
         });
         if (BOT_IDS.has(userId)) {
           const pool = D.BOT_REPLIES[userId] || ['👋'];
-          const n = (A._load().conversations[userId] || []).filter((m) => m.from === userId).length;
-          A.schedule(900 + Math.random() * 900, () => {
-            const reply = pool[n % pool.length];
+          const history = A._load().conversations[userId] || [];
+          const n = history.filter((m) => m.from === userId).length;
+          const deliver = (reply) => {
             A._mutate((st) => (st.conversations[userId] ||= []).push({ id: rid('m'), from: userId, text: reply, ts: A.now() }));
             A._notify({ kind: 'message', from: userId, text: reply });
-          });
+          };
+          if (A.llm) {
+            // Residents hold real conversations when an AI provider is wired in.
+            const r = D.RESIDENTS.find((x) => x.id === userId);
+            const biz = r.owns ? D.BUSINESSES[r.owns]?.name : null;
+            const persona = { name: r.displayName, age: r.age, job: r.roles.join(', '), bio: r.bio, vibe: r.vibe || 'friendly', business: biz, dating: r.dating };
+            const world = { city: WORLD.name, where: 'the city', time: 'today', places: PLACES.map((p) => p.name).join(', ') };
+            chatAs(A.llm, persona, world, history.slice(0, -1).map((m) => ({ me: m.from !== userId, text: m.text })), clean)
+              .then((t) => deliver(String(t).slice(0, 600)))
+              .catch(() => deliver(pool[n % pool.length]));
+          } else A.schedule(900 + Math.random() * 900, () => deliver(pool[n % pool.length]));
         } else {
           A.transport?.send({ type: 'dm', to: userId, text: clean });
         }
@@ -628,10 +698,11 @@ export class DemoPludorAdapter {
           const p = A._world().parcels[parcelId];
           if (!p?.businessName) throw new PludorError('not_found', 'Business not found.');
           return {
-            id: businessId, name: p.businessName, category: { restaurant: 'Restaurant', shop: 'Shop', service: 'Services' }[p.category] || 'Shop', ownerId: p.tenantId,
+            id: businessId, name: p.businessName, category: { restaurant: 'Restaurant', shop: 'Shop', service: 'Services', accommodation: 'Accommodation' }[p.category] || 'Shop', ownerId: p.tenantId,
             owner: A._userSummary(p.tenantId), claimed: true, verified: false, playerOwned: true, parcelId, rating: null, reviewCount: 0,
-            blurb: `A player-run business in Riverside Lots, owned by ${p.tenantName}.`, fulfillment: ['pickup', 'delivery'], catalog: p.catalog || [],
+            blurb: p.brand?.tagline || `A player-run business, owned by ${p.tenantName}.`, brand: p.brand || null, fulfillment: ['pickup', 'delivery'], catalog: p.catalog || [],
             open: true, slots: [], coupons: [], feedback: {}, myFeedback: false, claim: null,
+            ...playerServices(p, A._time()),
           };
         }
         const biz = D.BUSINESSES[businessId];
@@ -671,6 +742,7 @@ export class DemoPludorAdapter {
         }
         const biz = D.BUSINESSES[businessId];
         if (!biz?.catalog) throw new PludorError('not_found', 'This business has no catalog.');
+        if (biz.ageRestricted && !isAdult(A._load().profile, A.now(), A.eco.ageGate?.adult ?? 18)) throw new PludorError('age_restricted', 'This venue is 18+. Add your birth year in Settings.');
         if (!Array.isArray(items) || !items.length) throw new PludorError('empty_cart', 'Your cart is empty.');
         if (!biz.fulfillment.includes(fulfillment)) throw new PludorError('invalid_fulfillment', 'Choose a fulfillment option.');
         const lines = items.map(({ sku, qty }) => {
@@ -715,10 +787,12 @@ export class DemoPludorAdapter {
         return res;
       }),
       book: T(({ businessId, serviceId, slotId }) => {
+        if (String(businessId).startsWith('pb_')) return A._bookPlayer(businessId, serviceId, slotId);
         const biz = D.BUSINESSES[businessId];
         const svc = biz?.services?.find((s) => s.id === serviceId);
         if (!svc) throw new PludorError('not_found', 'Service not found.');
-        if (!/^d\d+h\d+$/.test(String(slotId))) throw new PludorError('invalid_slot', 'Pick a time slot.');
+        if (biz.ageRestricted && !isAdult(A._load().profile, A.now(), A.eco.ageGate?.adult ?? 18)) throw new PludorError('age_restricted', 'This venue is 18+. Add your birth year in Settings.');
+        if (!/^d-?\d+h\d+$/.test(String(slotId))) throw new PludorError('invalid_slot', 'Pick a time slot.');
         const res = A._mutate((st) => {
           if (st.bookings.some((b) => b.slotId === slotId && b.businessId === businessId && b.serviceId === serviceId)) throw new PludorError('duplicate', 'You already booked that slot.');
           if (svc.price > 0) A._debit(st, svc.price, 'booking', `${biz.name} · ${svc.name}`);
@@ -1081,7 +1155,7 @@ export class DemoPludorAdapter {
             status: occ ? 'rented' : 'available',
             tenant: occ ? A._userSummary(occ.tenantId) : null,
             mine: occ?.tenantId === A.me.id,
-            building: occ ? { template: occ.template, businessName: occ.businessName, tenantName: occ.tenantName } : null,
+            building: occ ? { template: occ.template, businessName: occ.businessName, tenantName: occ.tenantName, category: occ.category || null, brand: occ.brand || null } : null,
             allowedTemplates: ZONING_TEMPLATES[p.zoning],
             rentLabel: `${A.eco.currency.symbol}${p.rentPerWeek}/${A.eco.land.rentPeriodLabel}`,
           };
@@ -1122,7 +1196,7 @@ export class DemoPludorAdapter {
         return res;
       }),
       openBusiness: T((parcelId, name, category = 'shop') => {
-        if (!['restaurant', 'shop', 'service'].includes(category)) category = 'shop';
+        if (!['restaurant', 'shop', 'service', 'accommodation'].includes(category)) category = 'shop';
         const clean = String(name || '').replace(/[^\p{L}\p{N} &'.-]/gu, '').trim().slice(0, 22);
         if (clean.length < 2) throw new PludorError('invalid', 'Give your business a name.');
         A._mutateWorld((w) => {
@@ -1196,7 +1270,9 @@ export class DemoPludorAdapter {
 
     this.ads = {
       getCreative: T((placementId) => {
-        const eligible = D.CAMPAIGNS.filter((c) => c.placements.includes('*') || c.placements.includes(placementId));
+        const adult = isAdult(A._load().profile, A.now(), A.eco.ageGate?.adult ?? 18);
+        // Nightlife and other 18+ promotions are only served to adults.
+        const eligible = D.CAMPAIGNS.filter((c) => (c.placements.includes('*') || c.placements.includes(placementId)) && (adult || !c.ageRestricted));
         if (!eligible.length) return null;
         let h = 0;
         for (const ch of placementId) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
@@ -1258,11 +1334,13 @@ export class DemoPludorAdapter {
       listEvents: T(() => {
         const st = A._load();
         const t = A._time();
-        return D.EVENTS.map((e) => eventView(st, e, t)).sort((a, b) => a.startsInHours - b.startsInHours);
+        const adult = isAdult(st.profile, A.now(), A.eco.ageGate?.adult ?? 18);
+        return D.EVENTS.filter((e) => adult || !e.ageRestricted).map((e) => eventView(st, e, t)).sort((a, b) => a.startsInHours - b.startsInHours);
       }),
       buyTicket: T((eventId) => {
         const e = D.EVENTS.find((x) => x.id === eventId);
         if (!e?.ticket) throw new PludorError('invalid', 'This event is free.');
+        if (e.ageRestricted && !isAdult(A._load().profile, A.now(), A.eco.ageGate?.adult ?? 18)) throw new PludorError('age_restricted', 'This event is 18+.');
         const res = A._mutate((st) => {
           if (st.tickets.some((x) => x.eventId === eventId)) throw new PludorError('duplicate', 'You already have a ticket.');
           A._debit(st, e.ticket.price, 'ticket', `Ticket · ${e.title}`);

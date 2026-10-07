@@ -6,6 +6,7 @@
 import { WebSocketServer } from 'ws';
 import { SpatialGrid } from '../src/core/spatial-grid.js';
 import { DISTRICT } from '../src/config/nova-city.js';
+import { ECONOMY } from '../src/config/economy.js';
 
 const TICK_MS = 100;
 const INTEREST_RADIUS = 160;
@@ -52,7 +53,7 @@ export class Hub {
     let p = this.players.get(user.id);
     if (!p) {
       const saved = this.store.get(`world:pos:${user.id}`) || { x: DISTRICT.spawn.x, z: DISTRICT.spawn.z, ry: Math.PI };
-      p = { id: user.id, x: saved.x, z: saved.z, ry: saved.ry, moving: false, emote: null, last: Date.now(), allow: 3, violations: 0, teleport: null, profile: this._profile(user.id) };
+      p = { id: user.id, x: saved.x, z: saved.z, ry: saved.ry, moving: false, emote: null, last: Date.now(), allow: 3, violations: 0, teleport: null, profile: this._profile(user.id), maxSpeed: this._maxSpeed(user.id) };
       this.players.set(user.id, p);
       this.grid.upsert(user.id, p.x, p.z);
     }
@@ -91,13 +92,23 @@ export class Hub {
     const pr = st?.profile || {};
     return {
       handle: pr.handle, displayName: pr.displayName, color: pr.color, presence: PRESENCES.has(pr.presence) ? pr.presence : 'Online',
-      roles: pr.roles || [], bio: pr.bio || '', avatar: pr.avatar || null, look: pr.look || null,
+      roles: pr.roles || [], bio: pr.bio || '', avatar: pr.avatar || null, look: pr.look || null, dating: !!pr.dating,
     };
   }
 
   refreshProfile(id) {
     const p = this.players.get(id);
-    if (p) p.profile = this._profile(id);
+    if (p) {
+      p.profile = this._profile(id);
+      p.maxSpeed = this._maxSpeed(id);
+    }
+  }
+
+  // Owning a vehicle raises the movement budget to that vehicle's top speed.
+  _maxSpeed(id) {
+    const owned = this.store.get(`pludor-demo:user:${id}`)?.owned || [];
+    const v = (ECONOMY.virtualItems || []).filter((i) => i.kind === 'car' && owned.includes(i.id)).reduce((m, i) => Math.max(m, i.speed || 0), 0);
+    return v ? Math.max(MAX_SPEED, v + 3) : MAX_SPEED;
   }
 
   _rate(ws) {
@@ -137,7 +148,8 @@ export class Hub {
     const d = Math.hypot(x - p.x, z - p.z);
     // Distance budget refills at MAX_SPEED in real time (capped), so sending
     // messages faster never buys extra movement.
-    p.allow = Math.min(3, p.allow + MAX_SPEED * dt);
+    const cap = p.maxSpeed || MAX_SPEED;
+    p.allow = Math.min(cap / 3, p.allow + cap * dt);
     const tp = p.teleport && p.teleport.until > now && Math.hypot(x - p.teleport.x, z - p.teleport.z) < 6;
     const out = x < BOUNDS.x0 || x > BOUNDS.x1 || z < BOUNDS.z0 || z > BOUNDS.z1;
     if (out || (!tp && d > p.allow)) {

@@ -163,6 +163,27 @@ export const PLACES = [
     link: { type: 'venue', id: 'nova-heights' }, activity: 'rest',
   },
   {
+    id: 'pulse-club', name: 'Pulse Nightclub & Skybar', kind: 'nightclub', template: 'hall', ageRestricted: true,
+    x: -95, z: -95, w: 26, d: 24, h: 18, facing: 's', color: '#1b1030', accent: '#ff2bd6', subtitle: '18+ · club · bar · VIP',
+    tags: ['club', 'nightclub', 'party', 'parties', 'bar', 'drinks', 'dance', 'dj', 'night', 'vip', 'skybar', 'cocktail'], hours: [18, 28],
+    link: { type: 'business', id: 'biz_pulse' }, activity: 'play',
+    led: [{ lines: ['PULSE', 'FRI · SAT'], tag: '18+ · DJ Kwame', bg: ['#ff2bd6', '#5b21b6'] }],
+  },
+  {
+    id: 'fade-lab', name: 'Fade Lab Barbershop', kind: 'service', template: 'storefront',
+    x: 87.5, z: -95, w: 13, d: 22, h: 8, facing: 's', color: '#24323f', accent: '#e63946',
+    tags: ['barber', 'barbershop', 'haircut', 'fade', 'beard', 'shave', 'appointment', 'book', 'grooming'], hours: [8, 21],
+    link: { type: 'business', id: 'biz_fade_lab' },
+    display: [{ model: 'vase', size: 0.6, spin: false }],
+  },
+  {
+    id: 'nova-motors', name: 'Nova Motors', kind: 'dealer', template: 'storefront',
+    x: 102.5, z: -95, w: 13, d: 26, h: 12, facing: 's', color: '#1f2933', accent: '#4cc9f0',
+    tags: ['car', 'cars', 'dealer', 'dealership', 'buy car', 'vehicle', 'test drive', 'suv', 'sports car', 'scooter', 'bike', 'transport'], hours: [9, 20],
+    link: { type: 'business', id: 'biz_nova_motors' },
+    display: [{ model: 'toycar', size: 0.6 }],
+  },
+  {
     id: 'tool-district', name: 'Tool District', kind: 'tools', template: 'kiosks',
     x: 95, z: 50, w: 36, d: 26, h: 4, facing: 'w', color: '#28323f', accent: '#4cc9f0',
     tags: ['tools', 'qr', 'invoice', 'logo', 'calculator', 'utilities', 'free tools'], walkable: true,
@@ -210,9 +231,7 @@ export const TOKENS = [
 ];
 
 // Cells without a hand-placed landmark get procedurally generated buildings.
-export const FILLER_CELLS = [
-  [-2, -2], [2, -2],
-];
+export const FILLER_CELLS = [];
 
 export const DISTRICT_ZONES = [
   { id: 'central', name: 'Central Plaza', x0: -20, x1: 20, z0: -20, z1: 20 },

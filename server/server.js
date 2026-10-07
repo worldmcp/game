@@ -28,11 +28,34 @@ import { WORLD } from '../src/config/nova-city.js';
 localizeWorld({ country: process.env.WORLD_COUNTRY || null, copy: [DEMO_DATA.QUESTS, DEMO_DATA.BOT_REPLIES, DEMO_DATA.EVENTS, DEMO_DATA.GIGS, DEMO_DATA.COURSES, DEMO_DATA.TRIVIA, DEMO_DATA.BUSINESSES, DEMO_DATA.COMMUNITIES, DEMO_DATA.RESIDENTS] });
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
+
+// Conversational characters: with ANTHROPIC_API_KEY set, residents and
+// passers-by talk through Claude (production swaps in Pludor AI).
+const AI_KEY = process.env.ANTHROPIC_API_KEY || '';
+const AI_MODEL = process.env.WORLD_AI_MODEL || 'claude-haiku-4-5-20251001';
+const aiLlm = AI_KEY
+  ? async (turns) => {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': AI_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: AI_MODEL, max_tokens: 300, messages: turns }),
+    });
+    if (!r.ok) throw new Error(`AI ${r.status}`);
+    const j = await r.json();
+    return (j.content || []).map((c) => c.text || '').join('').trim();
+  }
+  : null;
+
+function validTurns(turns) {
+  if (!Array.isArray(turns) || !turns.length || turns.length > 24) return null;
+  const out = turns.map((t) => ({ role: t?.role === 'assistant' ? 'assistant' : 'user', content: String(t?.content || '').slice(0, 4000) })).filter((t) => t.content);
+  return out.length && out[0].role === 'user' && out[out.length - 1].role === 'user' ? out : null;
+}
 const STATIC_DIRS = ['src/', 'vendor/', 'assets/', 'styles/'];
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.glb': 'model/gltf-binary', '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
 const RPC = new Set(Object.entries(CONTRACT).flatMap(([ns, ms]) => ms.map((m) => `${ns}.${m}`)));
 // Economic / state-changing calls: idempotent + audited.
-const MUTATING = new Set(['orders.accept', 'orders.reject', 'orders.ready', 'orders.cancel', 'orders.collect', 'delivery.accept', 'delivery.pickup', 'delivery.dropoff', 'business.addProduct', 'business.removeProduct', 'commerce.createListing', 'commerce.checkout', 'commerce.book', 'commerce.buyListing', 'work.createGig', 'work.apply', 'work.submit', 'work.hire', 'work.approve', 'land.rent', 'land.openBusiness', 'shop.buyVirtual', 'events.buyTicket', 'events.attend', 'business.claim', 'business.feedback', 'games.submitGame', 'world.collectToken', 'learning.completeCourse', 'social.report', 'social.addFriend', 'social.block', 'messaging.send', 'voice.requestCall']);
+const MUTATING = new Set(['orders.accept', 'orders.reject', 'orders.ready', 'orders.cancel', 'orders.collect', 'delivery.accept', 'delivery.pickup', 'delivery.dropoff', 'business.addProduct', 'business.removeProduct', 'business.setBrand', 'commerce.createListing', 'commerce.checkout', 'commerce.book', 'commerce.buyListing', 'work.createGig', 'work.apply', 'work.submit', 'work.hire', 'work.approve', 'land.rent', 'land.openBusiness', 'shop.buyVirtual', 'events.buyTicket', 'events.attend', 'business.claim', 'business.feedback', 'games.submitGame', 'world.collectToken', 'learning.completeCourse', 'social.report', 'social.addFriend', 'social.block', 'messaging.send', 'voice.requestCall']);
 const STATUS = { own_gig: 409, not_found: 404, forbidden: 403, insufficient_funds: 402, duplicate: 409, taken: 409, pending: 409, already_claimed: 409, sold: 409, closed: 409, cooldown: 429, too_far: 409, not_live: 409, ticket_required: 402, inactive: 409, limit: 409, not_wired: 501 };
 
 export function createWorldServer({ dataDir = join(ROOT, '.data'), admins = [], quiet = false } = {}) {
@@ -51,7 +74,7 @@ export function createWorldServer({ dataDir = join(ROOT, '.data'), admins = [], 
     const uname = store.get(`auth:id:${userId}`);
     const u = auth.publicUser(store.get(`auth:user:${uname}`));
     const transport = hub.transportFor(userId);
-    const a = new DemoPludorAdapter({ user: { id: u.id, handle: u.handle, displayName: u.displayName, color: u.color }, storage: store, transport });
+    const a = new DemoPludorAdapter({ user: { id: u.id, handle: u.handle, displayName: u.displayName, color: u.color }, storage: store, transport, llm: aiLlm });
     a.transport = transport;
     a.subscribe((evt) => hub.pushEvent(userId, evt));
     adapters.set(userId, a);
@@ -131,7 +154,7 @@ export function createWorldServer({ dataDir = join(ROOT, '.data'), admins = [], 
       const place = PLACES.find((p) => p.id === args[0]);
       hub.allowTeleport(user.id, place ? entrancePoint(place, 3.5) : { x: 0, z: 9 });
     }
-    if (name === 'identity.updateProfile') hub.refreshProfile(user.id);
+    if (name === 'identity.updateProfile' || name === 'shop.buyVirtual') hub.refreshProfile(user.id);
     return out;
   }
 
@@ -184,6 +207,17 @@ export function createWorldServer({ dataDir = join(ROOT, '.data'), admins = [], 
       return send(res, 200, { ok: true });
     }
     if (path === '/api/auth/me') return send(res, 200, { user });
+    if (path === '/api/ai/chat') {
+      if (!aiLlm) return send(res, 503, { code: 'ai_unavailable', message: 'AI characters are not configured on this server.' });
+      if (!rate(`ai:${user.id}`, 20, 0.5)) return send(res, 429, { code: 'rate_limited', message: 'Give them a second to think.' });
+      const turns = validTurns((await readJson(req)).turns);
+      if (!turns) return send(res, 400, { code: 'invalid', message: 'Bad conversation.' });
+      try {
+        return send(res, 200, { text: (await aiLlm(turns)).slice(0, 1200) });
+      } catch {
+        return send(res, 502, { code: 'ai_error', message: 'They seem distracted — try again.' });
+      }
+    }
     if (path === '/api/admin/overview') {
       if (!user.roles.includes('admin')) return send(res, 403, { code: 'forbidden', message: 'Admins only.' });
       const world = store.get('pludor-demo:world') || {};

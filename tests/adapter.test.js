@@ -238,3 +238,25 @@ test('points buy virtual goods (never money) and gate premium looks', async () =
   assert.equal(me.look.cap, '#e63946');
   assert.ok((await adapter.wallet.getWallet()).owned.includes('acc-cap'));
 });
+
+test('hotel booth: accommodation business is branded and takes paid bookings', async () => {
+  const storage = memoryStorage();
+  const owner = harness(storage, 'u_owner').adapter;
+  await owner.land.rent('u-hb-2', 'booth');
+  await owner.land.openBusiness('u-hb-2', 'Lagoon Stays', 'accommodation');
+  await owner.business.addProduct('u-hb-2', { name: 'Sea-view studio · 1 night', price: 40, icon: '🛏️' });
+  await owner.business.setBrand('u-hb-2', { logo: '🏝️', color: '#0ea5e9', tagline: 'Short stays by the lagoon' });
+  await assert.rejects(owner.business.setBrand('u-hb-2', { logo: 'data:text/html;base64,AAAA' }), /PNG, JPEG or WebP/);
+  const guest = harness(storage, 'u_guest').adapter;
+  const biz = await guest.commerce.getBusiness('pb_u-hb-2');
+  assert.equal(biz.brand.logo, '🏝️');
+  assert.equal(biz.services.length, 1);
+  assert.ok(biz.slots.length > 0);
+  const before = (await owner.wallet.getWallet()).balance;
+  const r = await guest.commerce.book({ businessId: 'pb_u-hb-2', serviceId: biz.services[0].id, slotId: biz.slots[0].id });
+  assert.equal(r.booking.status, 'confirmed');
+  const after = (await owner.wallet.getWallet()).balance;
+  assert.equal(after - before, 38, 'owner paid minus 5% fee');
+  const unit = (await guest.land.listParcels()).find((p) => p.id === 'u-hb-2');
+  assert.equal(unit.building.brand.color, '#0ea5e9');
+});

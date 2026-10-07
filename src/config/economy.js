@@ -137,6 +137,10 @@ export const ECONOMY = {
 
   transit: { worldRideFee: 0 },
 
+  // Age gate for nightlife (clubs, bars, 18+ ads) and dating. Countries can
+  // raise it (e.g. 21); production reads verified age from Pludor identity.
+  ageGate: { adult: 18 },
+
   // Pludor Points: earned with XP (pointsPerXp), spent — alone or together
   // with Wallet money — on VIRTUAL game assets. Points never convert to money.
   points: { start: 100, perXp: 0.5 },
@@ -146,8 +150,14 @@ export const ECONOMY = {
     { id: 'acc-backpack', name: 'City backpack', icon: '🎒', kind: 'look', points: 150, money: 0, desc: 'Five colourways.' },
     { id: 'hair-fantasy', name: 'Fantasy hair colours', icon: '💜', kind: 'look', points: 150, money: 0, desc: 'Violet, cyan and pink hair.' },
     { id: 'outfit-neon', name: 'Neon outfit pack', icon: '🌈', kind: 'look', points: 200, money: 2, desc: 'Neon pink, ice blue and electric violet outfits.' },
-    { id: 'car-city', name: 'City EV', icon: '🚙', kind: 'car', points: 400, money: 15, color: '#4cc9f0', desc: 'Parks outside your home. Tap it to drive anywhere in the city.' },
-    { id: 'car-gt', name: 'Nova GT', icon: '🏎️', kind: 'car', points: 800, money: 40, color: '#e63946', desc: 'The fastest way to arrive in style.' },
+    // Vehicles: something for every budget. speed is m/s while driving.
+    { id: 'car-scooter', name: 'Electric Scooter', icon: '🛴', kind: 'car', vehicle: 'scooter', points: 60, money: 0, speed: 8, color: '#ffbe0b', desc: 'Zip around the district. Cheap and cheerful.' },
+    { id: 'car-ebike', name: 'E-Bike', icon: '🚲', kind: 'car', vehicle: 'bike', points: 120, money: 0, speed: 9, color: '#2a9d8f', desc: 'Pedal-assist, perfect for couriers.' },
+    { id: 'car-city', name: 'City EV', icon: '🚙', kind: 'car', vehicle: 'car', points: 400, money: 15, speed: 13, color: '#4cc9f0', desc: 'Parks outside your home. Drive anywhere, or offer rides for pay.' },
+    { id: 'car-sedan', name: 'Executive Sedan', icon: '🚘', kind: 'car', vehicle: 'car', points: 600, money: 25, speed: 15, color: '#1d1d1f', desc: 'Comfort for business and ride-share drivers.' },
+    { id: 'car-suv', name: 'Family SUV', icon: '🚐', kind: 'car', vehicle: 'car', points: 700, money: 30, speed: 14, color: '#3a5a40', desc: 'Room for everyone and their shopping.' },
+    { id: 'car-gt', name: 'Nova GT', icon: '🏎️', kind: 'car', vehicle: 'car', points: 800, money: 40, speed: 20, color: '#e63946', desc: 'The fastest way to arrive in style.' },
+    { id: 'car-aether', name: 'Aether X Hypercar', icon: '🚀', kind: 'car', vehicle: 'car', points: 2000, money: 120, speed: 24, color: '#c0c7d1', desc: 'Flagship. Chrome finish, turns every head in the city.' },
     { id: 'decor-plants', name: 'Home plant pack', icon: '🪴', kind: 'decor', points: 60, money: 0, desc: 'Greenery for your apartment or home.' },
     { id: 'decor-art', name: 'Skyline art print', icon: '🖼️', kind: 'decor', points: 90, money: 1, desc: 'A framed print for your living room.' },
     { id: 'trim-neon', name: 'Neon storefront trim', icon: '✨', kind: 'building', points: 300, money: 5, desc: 'Glowing trim for your shop or stall sign.' },

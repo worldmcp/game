@@ -6,7 +6,8 @@ import { html, raw, esc, money, timeAgo, PRESENCE_COLORS } from './dom.js';
 import { PLACES, PARCELS, AGENTS, WORLD, BILLBOARDS, entrancePoint, PLAZA } from '../config/nova-city.js';
 import { ECONOMY } from '../config/economy.js';
 import { CITY_BY_COUNTRY } from '../config/locale.js';
-import { RESIDENTS, SKILLS, FACULTIES } from '../pludor/demo-data.js';
+import { RESIDENTS, SKILLS, FACULTIES, NPC_PERSONAS } from '../pludor/demo-data.js';
+import { chatAs } from '../core/llm.js';
 import { PEOPLE } from '../config/assets.js';
 import { LOOK_OPTIONS, DEFAULT_LOOK, sanitizeLook, requiredItem, enforceOwnership } from '../core/look.js';
 import { SERVICE_CATEGORIES } from '../pludor/economy-chain.js';
@@ -58,6 +59,7 @@ export class Sheets {
 
   close() {
     this.app.endStudio?.();
+    this.app.talkingNpc = null;
     this.stack = [];
     this.el.classList.remove('open');
     this.el.innerHTML = '';
@@ -88,6 +90,7 @@ export class Sheets {
     const t = this.top;
     if (!t) return;
     if (t.view !== 'avatar') this.app.endStudio?.();
+    if (t.view !== 'npc') this.app.talkingNpc = null;
     const id = ++this._renderId;
     const v = VIEWS[t.view];
     const body = this.el.querySelector('.pw-sheet-body');
@@ -272,6 +275,9 @@ VIEWS.place = {
   title: (app, p) => placeById(p.id)?.name || 'Place',
   async render(app, props, s) {
     const p = placeById(props.id);
+    if (p.ageRestricted && !app.isAdult()) {
+      return html`${placeHeader(app, p)}<div class="pw-note">🔞 ${p.name} is for adults (18+). Nightlife venues, their drinks, tickets and promotions unlock once your Pludor profile shows you're an adult.</div>${btn('Add birth year in Settings', 'view', { view: 'settings', props: {} })}`;
+    }
     const sub = PLACE_KINDS[p.kind] || PLACE_KINDS.business;
     return sub.render(app, props, s, p);
   },
@@ -505,7 +511,7 @@ function renderBook(app, props, biz) {
       ${b.price ? html`<p class="pw-muted">${$m(b.price)} paid from your wallet.</p>` : ''}<div class="pw-row">${btn('My bookings', 'view', { view: 'orders' })}</div></div>`;
   }
   const svc = biz.services.find((x) => x.id === props.serviceId);
-  return html`<div class="pw-list">${biz.services.map((x) => html`<button class="pw-svc ${props.serviceId === x.id ? 'on' : ''}" ${A('svc', x.id)}><span>${x.icon}</span><div><b>${x.name}</b><small>${x.durationMin} min</small></div><b>${x.price ? $m(x.price) : 'Free'}</b></button>`)}</div>
+  return html`<div class="pw-list">${biz.services.map((x) => html`<button class="pw-svc ${props.serviceId === x.id ? 'on' : ''}" ${A('svc', x.id)}><span>${x.icon}</span><div><b>${x.name}</b><small>${x.durationMin >= 1440 ? "per night" : `${x.durationMin} min`}</small></div><b>${x.price ? $m(x.price) : 'Free'}</b></button>`)}</div>
     ${svc ? html`<h4>Pick a time</h4><div class="pw-slots">${biz.slots.map((sl) => html`<button class="${props.slotId === sl.id ? 'on' : ''}" ${A('slot', sl.id)}>${sl.label}</button>`)}</div>
       ${props.slotId ? html`<div class="pw-cart-row"><span>${svc.name} · <b>${svc.price ? $m(svc.price) : 'Free'}</b></span>${btn(svc.price ? `Book & pay ${$m(svc.price)}` : 'Reserve', 'book')}</div>` : ''}` : ''}`;
 }
@@ -882,7 +888,7 @@ VIEWS.parcel = {
         : b.businessName
           ? await storeManager(app, p)
           : html`<form class="pw-form" data-form="open"><h4>Open your business</h4><input name="name" required minlength="2" maxlength="22" placeholder="Business name">
-            <select name="category"><option value="restaurant" ${b.template === 'stall' ? 'selected' : ''}>🍽️ Restaurant / food</option><option value="shop" ${b.template === 'stall' || b.template === 'booth' || b.template === 'desk' ? '' : 'selected'}>🛍️ Shop</option><option value="service" ${b.template === 'booth' || b.template === 'desk' ? 'selected' : ''}>🧰 Services / bookings</option></select>
+            <select name="category"><option value="restaurant" ${b.template === 'stall' ? 'selected' : ''}>🍽️ Restaurant / food</option><option value="shop" ${b.template === 'stall' || b.template === 'booth' || b.template === 'desk' ? '' : 'selected'}>🛍️ Shop</option><option value="service" ${b.template === 'booth' || b.template === 'desk' ? 'selected' : ''}>🧰 Services / bookings</option><option value="accommodation">🛏️ Accommodation / stays</option></select>
             <button class="pw-btn">Open for business</button></form>`}
       <h4>Grow it</h4><div class="pw-grid3">
         <button class="pw-tile" ${A('view', { view: 'post-gig', props: { prefill: { parcelId: p.id, title: 'Build my storefront', category: 'virtual-construction', amount: 40 } } })}><span>🔨</span>Hire a builder</button>
@@ -922,6 +928,15 @@ VIEWS.parcel = {
     },
   },
   forms: {
+    async brand(app, props, data, s, f) {
+      let logo = data.logo || '';
+      const file = f.querySelector('input[type=file]')?.files?.[0];
+      if (file) logo = await shrinkImage(file, 160);
+      await app.api.business.setBrand(props.id, { logo, color: data.color, tagline: data.tagline });
+      app.hud.toast('Brand saved — your sign is updating', '🎨');
+      await app.refresh();
+      s.render(true);
+    },
     async addProduct(app, props, data, s, f) {
       await app.api.business.addProduct(props.id, { name: data.name, price: Number(data.price), icon: data.icon || '📦' });
       f.reset();
@@ -1094,6 +1109,86 @@ VIEWS.chat = {
     },
   },
 };
+
+// PASSERS-BY (conversational characters) ─────────────────
+VIEWS.npc = {
+  title: (app, p) => NPC_PERSONAS.find((x) => x.id === p.id)?.name || 'Chat',
+  noAutoRefresh: true,
+  render(app, props) {
+    const persona = NPC_PERSONAS.find((x) => x.id === props.id);
+    app.talkingNpc = props.id;
+    app.emote = 'talk';
+    const log = app.npcChats.get(props.id) || [];
+    if (!log.length) log.push({ me: false, text: persona.lines[0] });
+    app.npcChats.set(props.id, log);
+    if (props.opener === 'flirt' && !props.opened) {
+      props.opened = true;
+      setTimeout(() => VIEWS.npc.forms.send(app, props, { text: pickFlirt() }, app.sheets, null), 50);
+    }
+    const flirtOk = app.datingOn?.() && persona.dating;
+    return html`<div class="pw-npc-head"><div><b>${persona.name}</b><small>${persona.age ? `${persona.age} · ` : ''}${persona.job}</small></div>${app.llm ? html`<span class="pw-tag">✨ AI conversation</span>` : html`<span class="pw-tag">scripted</span>`}</div>
+      <div class="pw-chat">${log.map((m) => html`<div class="pw-msg ${m.me ? 'me' : ''}"><span>${m.text}</span></div>`)}${props.thinking ? html`<div class="pw-msg"><span class="pw-typing">${props.partial || '…'}</span></div>` : ''}</div>
+      <div class="pw-row tight">${flirtOk ? btn('💘 Flirt', 'flirt', null, 'sm ghost') : ''}${flirtOk ? btn('🍸 Ask on a date', 'date', null, 'sm ghost') : ''}${btn('👋 Wave', 'wave', null, 'sm ghost')}</div>
+      <form class="pw-chat-form" data-form="send"><input name="text" autocomplete="off" maxlength="300" placeholder="Say something to ${persona.name}" required><button class="pw-btn" ${props.thinking ? raw('disabled') : ''}>Send</button></form>
+      <p class="pw-muted">${app.llm ? 'Characters are AI. Keep it friendly; they can’t take payments or share contact details.' : 'Scripted demo character. In Pludor (or with AI enabled) they hold real conversations.'}</p>`;
+  },
+  mounted(app, props, s, body) {
+    const c = body.querySelector('.pw-chat');
+    c.scrollTop = c.scrollHeight;
+    if (matchMedia('(pointer: fine)').matches) body.querySelector('input')?.focus();
+  },
+  actions: {
+    flirt: (app, props, a, s) => VIEWS.npc.forms.send(app, props, { text: pickFlirt() }, s, null),
+    async date(app, props, a, s) {
+      const persona = NPC_PERSONAS.find((x) => x.id === props.id);
+      const venue = ['Skybar at Pulse', 'Ember Grill', 'Daily Grind', 'the Skyline Food Court'][Math.floor(Math.random() * 4)];
+      await VIEWS.npc.forms.send(app, props, { text: `Would you like to go on a date with me at ${venue} tonight?` }, s, null);
+      app.hud.notify({ icon: '💘', title: `Date with ${persona.name}`, body: `${venue} · tonight 8 PM. Manage dates in Pludor Dating.`, action: () => app.api.links.open('dating.home', {}).then?.(() => {}) });
+    },
+    wave(app, props) {
+      app.emote = 'wave';
+      setTimeout(() => app.emote === 'wave' && (app.emote = null), 2000);
+    },
+  },
+  forms: {
+    async send(app, props, data, s, f) {
+      const persona = NPC_PERSONAS.find((x) => x.id === props.id);
+      const text = String(data.text || '').trim().slice(0, 300);
+      if (!text || props.thinking) return;
+      f?.reset();
+      const log = app.npcChats.get(props.id) || [];
+      const history = log.slice();
+      log.push({ me: true, text });
+      if (!app.llm) {
+        log.push({ me: false, text: persona.lines[log.filter((m) => !m.me).length % persona.lines.length] });
+        return s.render(true);
+      }
+      props.thinking = true;
+      props.partial = '';
+      s.render(true);
+      const wt = app.worldTime();
+      const world = { city: WORLD.name, where: app.aiContext().zoneName, time: `${String(Math.floor(wt.hoursF)).padStart(2, '0')}:${String(Math.floor((wt.hoursF % 1) * 60)).padStart(2, '0')}`, places: PLACES.map((p) => p.name).join(', ') };
+      const p2 = { ...persona, dating: persona.dating && app.datingOn?.() };
+      try {
+        const reply = await chatAs(app.llm, p2, world, history, text, {
+          onText: ({ text: t }) => {
+            props.partial = t;
+            const el = s.el.querySelector('.pw-typing');
+            if (el) el.textContent = t;
+          },
+        });
+        log.push({ me: false, text: reply.slice(0, 600) });
+      } catch (e) {
+        if (e?.code === 'not_granted' || e?.code === 'sampling_disabled' || e?.code === 'unavailable') app.llm = null;
+        log.push({ me: false, text: persona.lines[log.length % persona.lines.length] });
+      }
+      props.thinking = false;
+      if (s.top?.view === 'npc') s.render(true);
+    },
+  },
+};
+const FLIRTS = ['I like your style 😊', 'Do you come to this part of the city often?', 'You have a great smile.', 'If I bought you a mocktail at Skybar, would you say yes?'];
+const pickFlirt = () => FLIRTS[Math.floor(Math.random() * FLIRTS.length)];
 
 // AI AGENTS / PLUDOR AI ────────────────────────────────────
 VIEWS.agent = {
@@ -1483,6 +1578,10 @@ VIEWS.profile = {
       <div class="pw-levelbox"><b>Level ${pr.level.level}</b><i><span style="width:${Math.round(pr.level.progress * 100)}%"></span></i><small>${pr.xp} XP · ${pr.level.next - pr.xp} to level ${pr.level.level + 1}</small></div>
       ${pr.nextRank ? html`<p class="pw-muted">Next rank: <b>${pr.nextRank.title}</b> — earn ${pr.nextRank.missing.join(', ')}.</p>` : ''}
       <div class="pw-kv"><div><span>Reputation</span><b>${pr.reputation.score}/100</b></div><div><span>Gigs done</span><b>${pr.reputation.gigsCompleted}</b></div><div><span>Orders</span><b>${pr.reputation.ordersCompleted}</b></div><div><span>Courses</span><b>${pr.reputation.courses}</b></div></div>
+      <h4>Age & dating</h4>
+      <div class="pw-grid2"><label class="pw-mini">Birth year<input class="pw-select" type="number" min="1900" max="${new Date().getFullYear() - 13}" value="${u.birthYear || ''}" placeholder="e.g. 1998" data-change="birthYear"></label>
+      <label class="pw-mini">Dating in the World${u.adult ? html`<select class="pw-select" data-change="dating"><option value="off" ${!u.dating ? raw('selected') : ''}>Off</option><option value="on" ${u.dating ? raw('selected') : ''}>On 💘</option></select>` : html`<small class="pw-muted">18+ only — add your birth year</small>`}</label></div>
+      <p class="pw-muted">Nightlife (clubs, bars, 18+ promotions) and dating unlock for adults. Dating is opt-in, only between adults who turned it on, and connects to Pludor Dating. You can block or report anyone.</p>
       <h4>Status</h4><select class="pw-select" data-change="presence">${PRESENCE.map((p) => html`<option ${u.presence === p ? raw('selected') : ''}>${p}</option>`)}</select>
       <h4>Privacy</h4><div class="pw-grid2"><label class="pw-mini">Who can message me<select class="pw-select" data-change="allowMessages">${['everyone', 'friends', 'nobody'].map((o) => html`<option ${u.allowMessages === o ? raw('selected') : ''}>${o}</option>`)}</select></label><label class="pw-mini">Who can voice call me<select class="pw-select" data-change="allowCalls">${['everyone', 'friends', 'nobody'].map((o) => html`<option ${u.allowCalls === o ? raw('selected') : ''}>${o}</option>`)}</select></label></div>
       <h4>Look</h4><div class="pw-swatches">${colors.map((c) => html`<button style="background:${c}" class="${u.color === c ? 'on' : ''}" ${A('color', c)} aria-label="${c}"></button>`)}</div>
@@ -1516,6 +1615,17 @@ VIEWS.profile = {
     async allowCalls(app, props, v) {
       await app.api.identity.updateProfile({ allowCalls: v });
       app.hud.toast(`Voice calls: ${v}`, '🔒');
+    },
+    async birthYear(app, props, v, s) {
+      await app.api.identity.updateProfile({ birthYear: Number(v) });
+      await app.refresh();
+      s.render(true);
+    },
+    async dating(app, props, v, s) {
+      await app.api.identity.updateProfile({ dating: v === 'on' });
+      await app.refresh();
+      app.hud.toast(v === 'on' ? 'Dating on — look for 💘 on people open to it' : 'Dating off', '💘');
+      s.render(true);
     },
   },
   forms: {
@@ -1739,12 +1849,37 @@ const STATUS_LABEL = {
 };
 const TIMELINE = ['placed', 'preparing', 'awaiting_courier', 'courier_assigned', 'out_for_delivery', 'delivered'];
 
+// Downscale an uploaded logo to a small square WebP data URL.
+function shrinkImage(file, size) {
+  return new Promise((ok, fail) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const g = c.getContext('2d');
+      const k = Math.max(size / img.width, size / img.height);
+      g.drawImage(img, (size - img.width * k) / 2, (size - img.height * k) / 2, img.width * k, img.height * k);
+      URL.revokeObjectURL(url);
+      ok(c.toDataURL('image/webp', 0.85));
+    };
+    img.onerror = () => fail(new Error('Could not read that image.'));
+    img.src = url;
+  });
+}
+
 async function storeManager(app, parcel) {
   const mine = (await app.api.business.mine()).find((b) => b.parcelId === parcel.id);
   if (!mine) return '';
   const live = mine.orders.filter((o) => ['placed', 'preparing'].includes(o.status));
   const fee = Math.round(ECONOMY.fees.commerce * 100);
+  const brand = parcel.building?.brand || {};
   return html`<div class="pw-note good">🏪 ${mine.name} is open · earned ${$m(mine.revenue)} after the ${fee}% platform fee.</div>
+    <h4>Your brand</h4><p class="pw-muted">Your logo and colours appear on your sign${parcel.venue ? ` at ${parcel.venueName}` : ''} for everyone in the World.</p>
+    <form class="pw-form" data-form="brand"><div class="pw-brand-prev" style="--c:${brand.color || '#7c5cff'}"><span>${brand.logo?.startsWith('data:') ? html`<img src="${brand.logo}" alt="">` : brand.logo || mine.name[0]}</span><b>${mine.name}</b><small>${brand.tagline || ''}</small></div>
+      <div class="pw-grid2"><input name="logo" maxlength="2" placeholder="Logo emoji e.g. 🏨" value="${brand.logo && !brand.logo.startsWith('data:') ? brand.logo : ''}"><label class="pw-mini">or upload logo<input name="file" type="file" accept="image/png,image/jpeg,image/webp"></label></div>
+      <div class="pw-grid2"><input name="tagline" maxlength="48" placeholder="Tagline e.g. Cosy rooms, city views" value="${brand.tagline || ''}"><label class="pw-mini">Brand colour<input name="color" type="color" value="${brand.color || '#7c5cff'}"></label></div>
+      <button class="pw-btn">Save brand</button></form>
     <h4>Incoming orders (${live.length})</h4>${live.length ? html`<div class="pw-list">${live.map((o) => html`<div class="pw-tx"><div><b>${o.customerName}</b><small>${o.lines.map((l) => `${l.qty}× ${l.name}`).join(', ')} · ${o.fulfillment}</small><span class="pw-status">${STATUS_LABEL[o.status]}</span></div>
       <div class="pw-col">${o.status === 'placed' ? html`${btn('Accept', 'orderAct', { id: o.id, act: 'accept' }, 'sm')}${btn('Decline', 'orderAct', { id: o.id, act: 'reject' }, 'sm ghost')}` : btn(o.fulfillment === 'delivery' ? 'Ready → courier' : 'Ready', 'orderAct', { id: o.id, act: 'ready' }, 'sm')}</div></div>`)}</div>` : empty('No orders waiting. Share your store or put up a World billboard!')}
     <h4>Your products (${mine.catalog.length})</h4>${mine.catalog.length ? html`<div class="pw-list">${mine.catalog.map((c) => html`<div class="pw-item"><div class="pw-item-icon">${c.icon}</div><div class="pw-item-body"><b>${c.name}</b><span class="pw-price">${$m(c.price)}</span></div>${btn('Remove', 'rmProduct', c.sku, 'sm ghost')}</div>`)}</div>` : empty('Add your first product so customers can order.')}
@@ -1803,7 +1938,7 @@ VIEWS.pbiz = {
     const p = app.state.parcels.find((x) => x.id === props.parcelId);
     return html`<div class="pw-place-hero" style="--accent:#36d399"><div class="pw-place-icon">${biz.category === 'Restaurant' ? '🍽️' : biz.category === 'Services' ? '🧰' : '🛍️'}</div><div><div class="pw-place-kind">${biz.name}</div><div class="pw-place-meta">${biz.category} · player-owned · by ${biz.owner?.displayName}</div></div></div>
       <div class="pw-row">${btn('💬 Message owner', 'chat', biz.ownerId, 'ghost sm')}${p ? btn('📍 Go there', 'go', { x: p.x, z: p.z - p.d / 2 - 2, label: biz.name }, 'ghost sm') : ''}</div>
-      ${biz.catalog.length ? renderShop(app, props, biz) : empty('This shop has no products yet.')}`;
+      ${biz.services?.length ? renderBook(app, props, biz) : biz.catalog.length ? renderShop(app, props, biz) : empty('This shop has no products yet.')}`;
   },
   actions: PLACE_KINDS.business.actions,
 };

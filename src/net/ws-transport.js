@@ -73,7 +73,7 @@ export class WsPresenceTransport {
           const pr = p.profile || {};
           this.peerMap.set(p.id, {
             id: p.id, handle: pr.handle || 'player', displayName: pr.displayName || 'Player', color: pr.color || '#888888',
-            skin: '#c68642', presence: pr.presence || 'Online', roles: pr.roles || [], bio: pr.bio || '', avatar: pr.avatar || null, look: pr.look || null,
+            skin: '#c68642', presence: pr.presence || 'Online', roles: pr.roles || [], bio: pr.bio || '', avatar: pr.avatar || null, look: pr.look || null, dating: !!pr.dating,
             x: p.x, z: p.z, ry: p.ry, moving: p.moving, emote: p.emote, inside: p.inside || null, seen: Date.now(),
           });
         }

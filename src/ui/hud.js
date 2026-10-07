@@ -12,7 +12,7 @@ import { currentStep } from '../core/quests.js';
 import { EV } from '../core/events.js';
 
 const KIND_COLORS = { cafe: '#ffcf8a', restaurant: '#ff7a59', market: '#ffd166', creator: '#b794ff', community: '#5ce1e6', education: '#7ee8a2', ai: '#8b7dff', games: '#ff5ce1', transit: '#36d399', media: '#ff4d6d', store: '#ffb703', service: '#ff9ecf', tools: '#4cc9f0' };
-const KIND_ICON = { cafe: '☕', restaurant: '🍽️', market: '🛒', creator: '🎬', community: '📡', education: '🎓', ai: '🤖', games: '🎮', transit: '🚆', media: '🎞️', store: '👟', service: '✂️', tools: '🧰', foodcourt: '🍜', hotel: '🏨', conference: '🎤', cowork: '💻', supermarket: '🛒', apartments: '🏢' };
+const KIND_ICON = { cafe: '☕', restaurant: '🍽️', market: '🛒', creator: '🎬', community: '📡', education: '🎓', ai: '🤖', games: '🎮', transit: '🚆', media: '🎞️', store: '👟', service: '✂️', tools: '🧰', nightclub: '🪩', dealer: '🚗', foodcourt: '🍜', hotel: '🏨', conference: '🎤', cowork: '💻', supermarket: '🛒', apartments: '🏢' };
 
 export class Hud {
   constructor(root, app) {
@@ -80,6 +80,7 @@ export class Hud {
       ${f.WORLD_AI_ENABLED ? '<button data-sheet="ai"><span>🤖</span>AI</button>' : ''}
     </nav>
     <div class="pw-tip" hidden role="status" aria-live="polite"></div>
+    <div class="pw-drive" hidden><span class="pw-drive-txt"></span><button data-hud="park">🅿️ Park (F)</button></div>
     ${f.WORLD_AI_ENABLED ? `<form class="pw-ai-box"><div class="pw-ai-head" data-sheet="ai"><span class="pw-ai-bot">🤖</span><b>Ask Pludor AI</b></div>
       <div class="pw-ai-row"><input name="q" autocomplete="off" placeholder='Try: "Find me a shop for rent"' aria-label="Ask Pludor AI"><button aria-label="Send">➤</button></div></form>` : ''}
     <div class="pw-sheet" role="dialog" aria-modal="false"></div>
@@ -167,6 +168,8 @@ export class Hud {
       }
       case 'studio':
         return app.sheets.open('avatar');
+      case 'park':
+        return app.stopDriving();
       default:
     }
   }
@@ -311,6 +314,8 @@ export class Hud {
         return 'Central Plaza';
       case 'spot':
         return f.sub || '';
+      case 'npc':
+        return `${f.sub}${app.llm ? ' · ✨ can chat' : ''}`;
       default:
         return '';
     }
@@ -327,6 +332,7 @@ export class Hud {
           { id: 'talk', icon: '💬', label: 'Talk', run: () => sheets.open('chat', { userId: id }) },
           ...(flags.WORLD_VOICE_ENABLED ? [{ id: 'voice', icon: '🎙️', label: 'Voice', run: () => sheets.call(id) }] : []),
           { id: 'wave', icon: '👋', label: 'Wave', run: () => sheets.wave(id) },
+          ...(f.person.dating && app.datingOn?.() ? [{ id: 'flirt', icon: '💘', label: 'Flirt', run: () => app.api.messaging.send(id, '😉 Hey — I like your vibe. Coffee or a mocktail at Skybar sometime?').then(() => sheets.open('chat', { userId: id })) }] : []),
           { id: 'profile', icon: '👤', label: 'Profile', run: () => sheets.open('player', { id }) },
         ];
       case 'place': {
@@ -343,8 +349,13 @@ export class Hud {
       }
       case 'spot':
         return f.acts || [];
+      case 'npc':
+        return [
+          { id: 'talk', icon: '💬', label: 'Talk', run: () => sheets.open('npc', { id }) },
+          ...(app.datingOn?.() && f.persona.dating ? [{ id: 'flirt', icon: '💘', label: 'Flirt', run: () => sheets.open('npc', { id, opener: 'flirt' }) }] : []),
+        ];
       case 'mycar':
-        return [{ id: 'drive', icon: '🚗', label: 'Drive', run: () => app.openRef(f.ref) }];
+        return [{ id: 'drive', icon: '🚗', label: 'Drive', run: () => app.startDriving(id) }, { id: 'travel', icon: '🗺️', label: 'Fast travel', run: () => sheets.open('map') }];
       case 'agent':
         return [{ id: 'talk', icon: '🤖', label: `Talk to ${AGENTS.find((a) => a.id === id).name}`, run: () => sheets.open('agent', { id }) }];
       case 'billboard':
@@ -364,6 +375,13 @@ export class Hud {
     if (!this._acts?.length || this.q('.pw-prompt').hidden) return;
     const a = actId ? this._acts.find((x) => x.id === actId) : this._acts[0];
     a?.run();
+  }
+
+  setDriving(item) {
+    const el = this.q('.pw-drive');
+    if (!el) return;
+    el.hidden = !item;
+    if (item) el.querySelector('.pw-drive-txt').textContent = `${item.icon} ${item.name} · ${item.speed} m/s`;
   }
 
   // ───────── guidance bubbles ─────────
@@ -390,9 +408,11 @@ export class Hud {
     this._tipOn = true;
     el.innerHTML = html`<span class="pw-tip-ico">${t.icon}</span><div class="pw-tip-body"><small>Pludor tip</small><p>${t.text}</p>${t.action ? html`<button class="pw-tip-cta">${t.cta || 'Show me'} →</button>` : ''}</div><button class="pw-tip-x" aria-label="Dismiss">✕</button>`.s;
     el.hidden = false;
+    this.root.classList.add('pw-tip-open');
     requestAnimationFrame(() => el.classList.add('in'));
     const hide = () => {
       el.classList.remove('in');
+      this.root.classList.remove('pw-tip-open');
       this._tipOn = false;
       setTimeout(() => !this._tipOn && (el.hidden = true), 300);
     };
@@ -736,7 +756,8 @@ export class Hud {
     const el = this.q('.pw-biz');
     let best = null;
     for (const p of PLACES) {
-      if (!['cafe', 'restaurant', 'store', 'service', 'market', 'foodcourt', 'hotel', 'supermarket', 'apartments', 'cowork'].includes(p.kind)) continue;
+      if (!['cafe', 'restaurant', 'store', 'service', 'market', 'foodcourt', 'hotel', 'supermarket', 'apartments', 'cowork', 'dealer', 'nightclub'].includes(p.kind)) continue;
+      if (p.ageRestricted && !this.app.isAdult()) continue;
       const e = entrancePoint(p);
       const d = Math.hypot(e.x - pp.x, e.z - pp.z);
       if (d < 55 && (!best || d < best.d)) best = { p, d };
@@ -792,7 +813,8 @@ export class Hud {
     };
     const focusId = app.focus?.ref.type === 'player' ? app.focus.ref.id : null;
     for (const p of app.people()) {
-      const el = this._plate(`p:${p.id}`, `person ${focusId === p.id ? 'focus' : ''}`, html`<span class="pw-dot" style="background:${PRESENCE_COLORS[p.presence] || '#36d399'}"></span>@${p.name}${focusId === p.id ? html`<b class="pw-talk">TALK · E</b>` : ''}`.s);
+      const heart = p.dating && app.datingOn?.() ? ' 💘' : '';
+      const el = this._plate(`p:${p.id}`, `person ${focusId === p.id ? 'focus' : ''}`, html`<span class="pw-dot" style="background:${PRESENCE_COLORS[p.presence] || '#36d399'}"></span>@${p.name}${heart}${focusId === p.id ? html`<b class="pw-talk">TALK · E</b>` : ''}`.s);
       el.className = `pw-plate person ${focusId === p.id ? 'focus' : ''}`;
       place(el, p.x, (app.inside ? app.floorY : 0) + 2.7, p.z, 45);
     }

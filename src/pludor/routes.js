@@ -34,6 +34,11 @@ export const PLUDOR_ROUTES = {
   'tools.calculator': { path: '/tools/calculator', label: 'Profit Calculator', confirmed: false },
   'ai.assistant': { path: '/ai', label: 'Pludor AI', confirmed: false },
   'live.event': { path: '/live/:eventId', label: 'Live', confirmed: false },
+  'live.goLive': { path: '/live/new', label: 'Go Live', confirmed: false },
+  'dating.home': { path: '/dating', label: 'Pludor Dating', confirmed: false },
+  'dating.profile': { path: '/dating/u/:handle', label: 'Pludor Dating profile', confirmed: false },
+  'wayfare.drive': { path: '/wayfare/drive', label: 'Drive with Wayfare', confirmed: false },
+  'business.site': { path: '/b/:businessId/site', label: 'Business website', confirmed: false },
 };
 
 export function resolveRoute(key, params = {}) {

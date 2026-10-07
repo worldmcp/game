@@ -62,14 +62,16 @@ export async function productInstance(name, size) {
   return o;
 }
 
-export function fitObject(obj, size) {
+// precise: measure real vertices (quantized/compressed meshes can report
+// loose bounds, which leaves vehicles floating above the road).
+export function fitObject(obj, size, precise = false) {
   obj.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(obj);
+  const box = new THREE.Box3().setFromObject(obj, precise);
   const dim = box.getSize(new THREE.Vector3());
   const s = size / Math.max(dim.x, dim.y, dim.z);
   obj.scale.multiplyScalar(s);
   obj.updateMatrixWorld(true);
-  const b2 = new THREE.Box3().setFromObject(obj);
+  const b2 = new THREE.Box3().setFromObject(obj, precise);
   const c = b2.getCenter(new THREE.Vector3());
   obj.position.x -= c.x;
   obj.position.z -= c.z;

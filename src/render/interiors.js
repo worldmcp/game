@@ -11,7 +11,7 @@
 
 import * as THREE from 'three';
 import { productInstance } from './assets.js';
-import { tileTexture, screenTexture, drawCinemaFrame } from './textures.js';
+import { tileTexture, screenTexture, drawCinemaFrame, brandSignTexture } from './textures.js';
 
 export const INTERIOR_Y = -60;
 
@@ -171,8 +171,8 @@ class LiveTile {
 
 export function interiorKindFor(place) {
   if (!place || place.walkable) return null;
-  const byId = { 'kicks-co': 'shoes', 'casa-nova': 'furniture', 'lumi-salon': 'salon', 'fixit-repair': 'repair' };
-  return byId[place.id] || { cafe: 'cafe', restaurant: 'restaurant', store: 'shoes', service: 'repair', creator: 'creator', community: 'community', education: 'classroom', ai: 'ai', games: 'arcade', transit: 'transit', media: 'cinema', foodcourt: 'foodcourt', apartments: 'apartments', hotel: 'hotel', conference: 'conference', cowork: 'cowork', supermarket: 'supermarket' }[place.kind] || 'lounge';
+  const byId = { 'kicks-co': 'shoes', 'casa-nova': 'furniture', 'lumi-salon': 'salon', 'fixit-repair': 'repair', 'fade-lab': 'barber' };
+  return byId[place.id] || { cafe: 'cafe', restaurant: 'restaurant', store: 'shoes', service: 'repair', creator: 'creator', community: 'community', education: 'classroom', ai: 'ai', games: 'arcade', transit: 'transit', media: 'cinema', foodcourt: 'foodcourt', nightclub: 'nightclub', dealer: 'dealer', apartments: 'apartments', hotel: 'hotel', conference: 'conference', cowork: 'cowork', supermarket: 'supermarket' }[place.kind] || 'lounge';
 }
 
 // spec: { key, kind, w, d, name, accent, menu?: [[name, price]], owner?: string }
@@ -217,7 +217,7 @@ export function buildInterior(spec) {
       return t;
     })(), roughness: 0.35 });
   add(box, floorMat, W, 0.2, D, 0, 0.1, 0);
-  const wallCol = { apartments: '#e6e1d8', foodcourt: '#2b2238', hotel: '#e9dfcf', conference: '#121c2b', cowork: '#e7ece4', supermarket: '#f4f6f2', cafe: '#efe4d3', restaurant: '#5b2e2a', shoes: '#f2f2f0', furniture: '#ece6dc', salon: '#f7e9ef', repair: '#dfe5da', creator: '#262038', community: '#1f3b4a', classroom: '#eef2ee', ai: '#141a33', arcade: '#16101f', transit: '#e7eef0', cinema: '#140f18', home: '#efe7dc', shop: '#f2f0ec', lounge: '#e8e4ee' }[spec.kind] || '#eeeeee';
+  const wallCol = { nightclub: '#0d0714', barber: '#20262e', dealer: '#e9edf1', apartments: '#e6e1d8', foodcourt: '#2b2238', hotel: '#e9dfcf', conference: '#121c2b', cowork: '#e7ece4', supermarket: '#f4f6f2', cafe: '#efe4d3', restaurant: '#5b2e2a', shoes: '#f2f2f0', furniture: '#ece6dc', salon: '#f7e9ef', repair: '#dfe5da', creator: '#262038', community: '#1f3b4a', classroom: '#eef2ee', ai: '#141a33', arcade: '#16101f', transit: '#e7eef0', cinema: '#140f18', home: '#efe7dc', shop: '#f2f0ec', lounge: '#e8e4ee' }[spec.kind] || '#eeeeee';
   const wallMat = M(wallCol, { rough: 0.9 });
   const T = 0.3;
   const door = 2.6;
@@ -370,7 +370,7 @@ export function buildInterior(spec) {
       add(box, M('#f2f2f2', { rough: 0.4 }), u.w, 0.05, u.d, u.lx, 0.95, u.lz);
       add(box, M('#333', { metal: 0.5 }), u.w - 0.1, 0.72, 0.05, u.lx, 0.58, u.lz - u.d / 2 + 0.05);
       solid(u.lx, u.lz, u.w / 2, u.d / 2);
-      screen(0.8, 0.45, u.lx, 1.32, u.lz - 0.25, 0, boardTexture(open ? open : u.status === 'available' ? 'FREE DESK' : 'IN USE', [[u.status === 'available' ? u.rentLabel : u.tenant?.displayName || '', '']], { accent: col, w: 512, h: 288 }));
+      screen(0.8, 0.45, u.lx, 1.32, u.lz - 0.25, 0, open ? brandSignTexture(open, u.building.brand || { color: accent }, { w: 512, h: 288 }) : boardTexture(u.status === 'available' ? 'FREE DESK' : 'IN USE', [[u.status === 'available' ? u.rentLabel : u.tenant?.displayName || '', '']], { accent: col, w: 512, h: 288 }));
       sit(u.lx, u.lz + 0.75, Math.PI);
     } else {
       const along = front[0] === 0;
@@ -384,7 +384,8 @@ export function buildInterior(spec) {
       const sx = u.lx - front[0] * (u.side ? u.w / 2 - 0.1 : 0);
       const sz = u.lz - front[1] * (u.side ? 0 : u.d / 2 - 0.1);
       add(box, M(col, { rough: 0.5, emissive: col, ei: 0.15 }), along ? cw : 0.1, 2.6, along ? 0.1 : cw, sx, 1.5, sz);
-      const sign = add(plane, new THREE.MeshBasicMaterial({ map: boardTexture(label, [], { bg: '#111318', accent: col, w: 1024, h: 200 }), toneMapped: false }), Math.min(cw, 6), Math.min(cw, 6) * 0.195, 1, cx, 3.05, cz, ry);
+      const signTex = open ? brandSignTexture(open, u.building.brand || { color: accent }, { sub: u.building.category ? `${u.building.category}` : '' }) : boardTexture(label, [], { bg: '#111318', accent: col, w: 1024, h: 200 });
+      const sign = add(plane, new THREE.MeshBasicMaterial({ map: signTex, toneMapped: false }), Math.min(cw, 6), Math.min(cw, 6) * (open ? 0.215 : 0.195), 1, cx, 3.05, cz, ry);
       sign.receiveShadow = false;
       if (open && u.catalog?.length) screen(Math.min(cw * 0.55, 2.6), 1.1, sx + front[0] * 0.1, 1.95, sz + front[1] * 0.1, ry, boardTexture(open, u.catalog.slice(0, 5).map((c) => [c.name, `$${c.price}`]), { accent: col, w: 768, h: 384 }));
       if (open && u.staff) person(sx + front[0] * 0.8, sz + front[1] * 0.8, ry, u.staff);
@@ -704,6 +705,123 @@ export function buildInterior(spec) {
       spot(0, zBack + 4.2, 'Main screen', 'Flika premieres and live concerts', [{ id: 'watch', icon: '🎬', label: 'Watch', action: { type: 'sheet', view: 'place', props: { id: spec.placeId } } }, { id: 'events', icon: '🎟️', label: 'Shows & tickets', action: { type: 'sheet', view: 'events', props: {} } }], 3.5);
       spot(-W / 2 + 1.6, zBack + 7, 'Live wall', 'Creators streaming right now', [{ id: 'live', icon: '🔴', label: 'Watch live', action: { type: 'sheet', view: 'place', props: { id: spec.placeId } } }, { id: 'golive', icon: '📹', label: 'Go live', action: { type: 'golive' } }], 2.6);
       spot(-W / 2 + 3, D / 2 - 2.5, 'Box office & snacks', 'Tickets, popcorn, merch', [{ id: 'tickets', icon: '🎟️', label: 'Tickets', action: { type: 'sheet', view: 'events', props: {} } }, { id: 'snack', icon: '🍿', label: 'Snack', action: { type: 'activity', id: 'snack' } }]);
+      break;
+    }
+    case 'nightclub': {
+      // Dance floor of animated LED tiles, DJ booth, bar, VIP booths, live wall.
+      const tiles = [];
+      const floorW = Math.min(12, W * 0.5);
+      for (let i = 0; i < 6; i++)
+        for (let j = 0; j < 5; j++) {
+          const m = new THREE.MeshBasicMaterial({ color: '#ff2bd6', toneMapped: false });
+          const t = add(box, m, floorW / 6 - 0.06, 0.04, 1.6 - 0.06, -floorW / 2 + (floorW / 6) * (i + 0.5), 0.22, -4 + j * 1.6);
+          t.receiveShadow = false;
+          tiles.push([t, i, j]);
+        }
+      out.tickers.push((time) => {
+        for (const [t, i, j] of tiles) t.material.color.setHSL(((time * 0.15 + i * 0.09 + j * 0.13) % 1), 0.9, 0.35 + 0.25 * Math.max(0, Math.sin(time * 6 + i + j * 2)));
+      });
+      // DJ booth.
+      add(box, M('#111', { metal: 0.6, rough: 0.3 }), 4, 1.2, 1.2, 0, 0.8, zBack + 1.4);
+      add(box, M('#fff', { emissive: '#22d3ee', ei: 2 }), 3.8, 0.05, 0.05, 0, 1.42, zBack + 2.02);
+      solid(0, zBack + 1.4, 2, 0.6);
+      person(0, zBack + 0.6, 0, 'male_adult_11');
+      const lw = Math.min(10, W * 0.45);
+      out.liveTiles = [new LiveTile('pulse', 820, 300)];
+      screen(lw, lw * 0.5625 * 0.5, 0, H - 2, zBack + 0.08, 0, out.liveTiles[0].t);
+      out.tickers.push((t) => out.liveTiles[0].update(t));
+      // Lasers sweeping over the floor.
+      const lasers = [];
+      for (let k = 0; k < 6; k++) {
+        const l = add(box, new THREE.MeshBasicMaterial({ color: ['#22d3ee', '#ff2bd6', '#a3e635'][k % 3], transparent: true, opacity: 0.55, toneMapped: false, depthWrite: false }), 0.03, 0.03, 14, -floorW / 2 + k * (floorW / 5), H - 0.4, -2);
+        l.receiveShadow = false;
+        lasers.push(l);
+      }
+      out.tickers.push((time) => lasers.forEach((l, k) => {
+        l.rotation.x = Math.sin(time * 1.3 + k) * 0.6 - 0.35;
+        l.rotation.y = Math.cos(time * 0.9 + k * 0.7) * 0.7;
+      }));
+      // Bar with bottles and a bartender.
+      counter(W / 2 - 1.6, 0, 0.9, Math.min(10, D - 6), '#2b1638', '#ff2bd6');
+      for (let k = 0; k < 8; k++) product('bottle', 0.3, W / 2 - 0.4, 1.4 + (k % 2) * 0.5, -3.5 + k);
+      add(box, M('#3a2050', { rough: 0.6 }), 0.3, 1.6, Math.min(10, D - 6), W / 2 - 0.25, 1.6, 0);
+      person(W / 2 - 0.9, 0, -Math.PI / 2, 'female_adult_15');
+      spot(W / 2 - 2.8, 0, 'Skybar', 'Cocktails, mocktails, wings · 18+', [{ id: 'drinks', icon: '🍸', label: 'Order drinks', action: { type: 'sheet', view: 'place', props: { id: spec.placeId, tab: 'shop' } } }], 2.4);
+      // VIP booths.
+      for (let k = 0; k < 3; k++) {
+        const z = -5 + k * 4;
+        sofa(-W / 2 + 1, z, 2.6, Math.PI / 2, '#5b21b6');
+        table(-W / 2 + 2.4, z, 0.5, '#111');
+        add(sphere, M('#fff', { emissive: '#ff2bd6', ei: 2 }), 0.12, 0.12, 0.12, -W / 2 + 2.4, 1.1, z);
+      }
+      spot(-W / 2 + 3.4, -1, 'VIP booths', 'Reserve a table for your crew', [{ id: 'vip', icon: '🥂', label: 'Book VIP', action: { type: 'sheet', view: 'place', props: { id: spec.placeId, tab: 'book' } } }], 2.6);
+      spot(0, 0, 'Dance floor', 'Feel the music', [{ id: 'dance', icon: '💃', label: 'Dance', action: { type: 'activity', id: 'play' } }, { id: 'events', icon: '🎟️', label: 'Club nights', action: { type: 'sheet', view: 'events', props: {} } }], 3.5);
+      spot(0, zBack + 3, 'DJ booth', 'Promote your night here — rent the screens', [{ id: 'promo', icon: '📣', label: 'Promote a party', action: { type: 'sheet', view: 'land', props: {} } }], 1.8);
+      break;
+    }
+    case 'barber': {
+      for (let k = 0; k < 3; k++) {
+        const x = -W / 2 + 2.2 + k * ((W - 4.4) / 2);
+        add(box, M('#e8e0e4', { metal: 0.9, rough: 0.04 }), 1.2, 1.3, 0.05, x, 1.8, zBack + 0.05); // mirror
+        add(box, M('#fff', { emissive: '#fff4ea', ei: 2 }), 1.4, 0.06, 0.06, x, 2.55, zBack + 0.09);
+        add(cyl, M('#222', { metal: 0.7, rough: 0.3 }), 0.25, 0.4, 0.25, x, 0.4, zBack + 1.6);
+        add(box, M('#7a1f1f', { rough: 0.5 }), 0.6, 0.18, 0.6, x, 0.72, zBack + 1.6);
+        add(box, M('#7a1f1f', { rough: 0.5 }), 0.6, 0.75, 0.12, x, 1.15, zBack + 1.35);
+        post(x, zBack + 1.6, 0.45);
+      }
+      person(-W / 2 + 2.2, zBack + 2.4, Math.PI, 'male_adult_15');
+      person(0, zBack + 2.4, Math.PI, 'male_adult_04');
+      // Barber pole by the door.
+      const pole = add(cyl, new THREE.MeshBasicMaterial({ map: (() => {
+        const [c, g2] = canvas(64, 256);
+        for (let y = -256; y < 512; y += 48) {
+          g2.fillStyle = '#e63946';
+          g2.beginPath();
+          g2.moveTo(0, y);
+          g2.lineTo(64, y + 32);
+          g2.lineTo(64, y + 48);
+          g2.lineTo(0, y + 16);
+          g2.fill();
+          g2.fillStyle = '#1d3557';
+          g2.fillRect(0, y + 24, 64, 4);
+        }
+        const t = tex(c);
+        t.wrapS = t.wrapT = THREE.RepeatWrapping;
+        return t;
+      })() }), 0.12, 1.2, 0.12, W / 2 - 0.6, 1.6, D / 2 - 1);
+      out.tickers.push((time) => (pole.material.map.offset.y = (time * 0.4) % 1));
+      add(box, M('#30343f', { rough: 0.6 }), 0.6, 0.45, 3, W / 2 - 0.5, 0.42, 0); // waiting bench
+      solid(W / 2 - 0.5, 0, 0.3, 1.5);
+      spot(0, zBack + 3.4, 'Book a chair', 'Real appointments with real barbers', [order('Book appointment', '💈')], 2.6);
+      spot(W / 2 - 1.6, 0, 'Waiting bench', 'Relax while you wait', [{ id: 'rest', icon: '🪑', label: 'Sit', action: { type: 'activity', id: 'rest' } }], 1.4);
+      break;
+    }
+    case 'dealer': {
+      // Showroom: cars on lit turntables, sales desk, financing.
+      const cars = spec.showroom || [];
+      cars.slice(0, 3).forEach((c, k) => {
+        const z = zBack + 4 + k * ((D - 8) / 3);
+        const disc = add(cyl, M('#d9dee3', { metal: 0.6, rough: 0.25 }), 2.6, 0.12, 2.6, 0, 0.27, z);
+        disc.receiveShadow = true;
+        if (spec.carTemplate) {
+          const car = spec.carTemplate.clone(true);
+          car.traverse((o) => {
+            if (o.isMesh && /paint/i.test(o.material.name)) {
+              o.material = o.material.clone();
+              o.material.color.set(c.color);
+            }
+          });
+          car.position.set(0, 0.33, z);
+          g.add(car);
+          out.tickers.push((t) => (car.rotation.y = t * 0.3 + k));
+        }
+        solid(0, z, 2.4, 2.4);
+        spot(2.8, z, `${c.icon} ${c.name}`, `${c.points} pts${c.money ? ` + $${c.money}` : ''} · ${c.speed} m/s`, [{ id: 'buy', icon: '🛒', label: 'Buy (virtual)', action: { type: 'sheet', view: 'vstore', props: {} } }, { id: 'test', icon: '🔑', label: 'Real test drive', action: { type: 'sheet', view: 'place', props: { id: spec.placeId, tab: 'book' } } }], 2.4);
+      });
+      counter(W / 2 - 1.4, D / 2 - 4, 0.8, 2.6, '#1f2933', '#4cc9f0');
+      person(W / 2 - 0.7, D / 2 - 4, -Math.PI / 2, 'business_male_02');
+      spot(W / 2 - 2.4, D / 2 - 4, 'Sales desk', 'Real cars from partner dealers', [order('Reserve / test drive', '🔑'), { id: 'all', icon: '🚗', label: 'All vehicles', action: { type: 'sheet', view: 'vstore', props: {} } }], 2);
+      for (let z = zBack + 3; z < D / 2 - 2; z += 4) pendant(-W / 2 + 1.5, z, '#e8f4ff');
       break;
     }
     case 'apartments': {

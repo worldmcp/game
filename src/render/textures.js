@@ -638,3 +638,70 @@ export function leafCardTexture(seed = 1) {
   cache.set(key, t);
   return t;
 }
+
+// Branded sign: the business's logo (emoji or uploaded image) beside its name
+// in brand colours. Image logos load asynchronously and repaint the texture.
+export function brandSignTexture(name, brand = {}, { sub = '', w = 1024, h = 220 } = {}) {
+  const [c, g] = canvas(w, h);
+  const color = /^#[0-9a-f]{6}$/i.test(brand.color || '') ? brand.color : '#7c5cff';
+  const t = tex(c);
+  const paint = (img) => {
+    g.clearRect(0, 0, w, h);
+    const grad = g.createLinearGradient(0, 0, w, h);
+    grad.addColorStop(0, shade(color, -55));
+    grad.addColorStop(1, shade(color, -75));
+    g.fillStyle = grad;
+    roundRect(g, 0, 0, w, h, 26);
+    g.fill();
+    g.fillStyle = color;
+    g.fillRect(0, h - 12, w, 12);
+    // Logo tile.
+    const L = h - 44;
+    const lx = 22;
+    const ly = 16;
+    g.fillStyle = '#ffffff';
+    roundRect(g, lx, ly, L, L, 22);
+    g.fill();
+    if (img) {
+      g.save();
+      roundRect(g, lx, ly, L, L, 22);
+      g.clip();
+      const k = Math.max(L / img.width, L / img.height);
+      g.drawImage(img, lx + (L - img.width * k) / 2, ly + (L - img.height * k) / 2, img.width * k, img.height * k);
+      g.restore();
+    } else {
+      g.font = `${Math.round(L * 0.72)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillStyle = color;
+      g.fillText(brand.logo && !brand.logo.startsWith('data:') ? brand.logo : (name || '?')[0].toUpperCase(), lx + L / 2, ly + L / 2 + 4);
+    }
+    // Name + tagline.
+    const x0 = lx + L + 28;
+    g.textAlign = 'left';
+    g.textBaseline = 'middle';
+    g.fillStyle = '#ffffff';
+    let size = Math.round(h * 0.36);
+    g.font = `900 ${size}px Inter, system-ui, sans-serif`;
+    while (g.measureText(name).width > w - x0 - 24 && size > 20) {
+      size -= 2;
+      g.font = `900 ${size}px Inter, system-ui, sans-serif`;
+    }
+    const tag = brand.tagline || sub;
+    g.fillText(name, x0, tag ? h * 0.4 : h * 0.5);
+    if (tag) {
+      g.globalAlpha = 0.85;
+      g.font = `600 ${Math.round(h * 0.17)}px Inter, system-ui, sans-serif`;
+      g.fillText(String(tag).slice(0, 48), x0, h * 0.72);
+      g.globalAlpha = 1;
+    }
+    t.needsUpdate = true;
+  };
+  paint(null);
+  if (brand.logo && brand.logo.startsWith('data:image/')) {
+    const img = new Image();
+    img.onload = () => paint(img);
+    img.src = brand.logo;
+  }
+  return t;
+}

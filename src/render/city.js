@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { DISTRICT, cellBounds, footprint, facingVector } from '../config/nova-city.js';
-import { facadeTextures, facadePBR, asphaltPBR, paversPBR, grassPBR, leafCardTexture, signTexture, tileTexture, screenTexture, drawCinemaFrame, adTexture, shade } from './textures.js';
+import { brandSignTexture, facadeTextures, facadePBR, asphaltPBR, paversPBR, grassPBR, leafCardTexture, signTexture, tileTexture, screenTexture, drawCinemaFrame, adTexture, shade } from './textures.js';
 import { productInstance } from './assets.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { addPalms, addTerrace, FountainSpray, createAirship, createLandmarkTower, createSkyline, LedScreen } from './props.js';
@@ -96,7 +96,7 @@ export class City {
       glass: new THREE.MeshStandardMaterial({ color: '#5d7a8f', roughness: 0.04, metalness: 0.75, emissive: '#ffcf8a', emissiveIntensity: 0.15 }),
       white: new THREE.MeshStandardMaterial({ color: '#f1f3f5', roughness: 0.8 }),
     };
-    this.nightMats.push({ mat: this.mats.glass, day: 0.15, night: 0.9 });
+    this.nightMats.push({ mat: this.mats.glass, day: 0.15, night: 0.55 });
     this._ground();
     this._roads();
     this._blocks();
@@ -503,7 +503,9 @@ export class City {
     awning.position.set(0, gf + 0.15, d / 2 + 0.95);
     awning.rotation.x = 0.2;
     awning.castShadow = true;
-    const sign = this._sign(p.name, p.subtitle || '', accent, Math.min(w * 0.7, 12), 1.5);
+    const sw = Math.min(w * 0.7, 12);
+    const sign = p.brand ? new THREE.Mesh(plane, new THREE.MeshBasicMaterial({ map: brandSignTexture(p.name, p.brand, { sub: p.subtitle }), transparent: true })) : this._sign(p.name, p.subtitle || '', accent, sw, 1.5);
+    if (p.brand) sign.scale.set(sw, sw * 0.215, 1);
     sign.position.set(0, gf + 1.35, d / 2 + 0.06);
     g.add(upper, core, back, floor, ceil, fascia, glass, doorFrame, doorGlass, awning, sign, this._roofCap(w, d, h, color));
     // Planters either side of the door.
@@ -576,7 +578,7 @@ export class City {
     canopy.position.set(0, 4.9, d / 2 + 1.4);
     canopy.castShadow = true;
     const stripMat = new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.6 });
-    this.nightMats.push({ mat: stripMat, day: 0.5, night: 1.6 });
+    this.nightMats.push({ mat: stripMat, day: 0.5, night: 1.0 });
     const crown = new THREE.Mesh(box, stripMat);
     crown.scale.set(w + 0.3, 0.6, d + 0.3);
     crown.position.y = h - 1.2;
@@ -608,7 +610,7 @@ export class City {
       g.add(mu);
     }
     const bandMat = new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.5 });
-    this.nightMats.push({ mat: bandMat, day: 0.4, night: 1.4 });
+    this.nightMats.push({ mat: bandMat, day: 0.4, night: 0.9 });
     const band = new THREE.Mesh(box, bandMat);
     band.scale.set(w + 0.2, 0.5, d + 0.2);
     band.position.y = h * 0.72;
@@ -705,7 +707,7 @@ export class City {
       }
     // String lights across the aisles.
     const bulbMat = new THREE.MeshStandardMaterial({ color: '#ffe8a3', emissive: '#ffcf6b', emissiveIntensity: 0.2 });
-    this.nightMats.push({ mat: bulbMat, day: 0.2, night: 2.2 });
+    this.nightMats.push({ mat: bulbMat, day: 0.2, night: 1.3 });
     const bulbs = new THREE.InstancedMesh(new THREE.SphereGeometry(0.16, 6, 4), bulbMat, 120);
     const mtx = new THREE.Matrix4();
     let b = 0;
@@ -854,6 +856,7 @@ export class City {
       color: tpl === 'home' ? '#b07d62' : tpl === 'studio' ? '#4b3f72' : '#3f5a73',
       accent: group.userData.zoneColor,
       subtitle: building.businessName ? 'Open on Pludor' : tpl === 'home' ? 'Residence' : 'Coming soon',
+      brand: building.businessName ? building.brand || null : null,
     };
     const seed = [...parcelId].reduce((a, c) => a + c.charCodeAt(0), 0);
     const b = tpl === 'studio' ? this._hall(spec, seed) : this._storefront(spec, seed);
@@ -1095,7 +1098,7 @@ export class City {
 
     const pole = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.08, 0.12, 5, 6), this.mats.metal, lamps.length);
     const headMat = new THREE.MeshStandardMaterial({ color: '#fff4d6', emissive: '#ffd27a', emissiveIntensity: 0 });
-    this.nightMats.push({ mat: headMat, day: 0, night: 2.4 });
+    this.nightMats.push({ mat: headMat, day: 0, night: 1.4 });
     const head = new THREE.InstancedMesh(new THREE.SphereGeometry(0.32, 10, 8), headMat, lamps.length);
     q.identity();
     lamps.forEach(([x, z], k) => {
@@ -1159,7 +1162,11 @@ export class City {
       this.tower.userData.beacon.visible = Math.sin(time * 3) > 0;
     }
     if (this.skyline) for (const m of this.skyline.userData.mats) m.emissiveIntensity = night * 1.0;
-    for (const m of this.windowMats) m.emissiveIntensity = night * 1.05;
+    for (const m of this.windowMats) m.emissiveIntensity = night * 0.65;
+    // Screens are unlit (toneMapped off); dim them after dark so they don't glare.
+    const scr = 1 - night * 0.38;
+    for (const l of this.leds) l.mesh.material.color.setScalar(scr);
+    for (const b of this.billboards.values()) b.face.material.color.setScalar(b.creativeId ? scr : 0.2);
     for (const { mat, day, night: n } of this.nightMats) mat.emissiveIntensity = day + (n - day) * night;
     if (this.skylineMat) this.skylineMat.color.setHSL(0.6, 0.15, 0.22 + daylight * 0.25);
     this.animated = this.animated.filter((fn) => !fn(time));

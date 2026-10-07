@@ -31,12 +31,33 @@ export const FACULTIES = [
 export const STARTING_SKILLS = { communication: 1, driving: 1 };
 
 export const RESIDENTS = [
-  { id: 'u_maya', handle: 'maya', displayName: 'Maya', color: '#ff8a5b', skin: '#8d5524', presence: 'Available for Work', roles: ['Creator', 'Photographer'], bio: 'UGC creator · product photos · 4.9★ on 38 gigs', skills: { photography: 4, video: 3 }, walk: 'plaza', person: 'female_adult_05' },
+  { id: 'u_maya', handle: 'maya', displayName: 'Maya', color: '#ff8a5b', skin: '#8d5524', presence: 'Available for Work', roles: ['Creator', 'Photographer'], bio: 'UGC creator · product photos · 4.9★ on 38 gigs', skills: { photography: 4, video: 3 }, walk: 'plaza', person: 'female_adult_05', age: 26, dating: true, vibe: 'friendly, hustling' },
   { id: 'u_jay', handle: 'jay', displayName: 'Jay', color: '#8f7ce0', skin: '#c68642', presence: 'Hiring', roles: ['Agency Owner'], bio: 'Runs a small creator agency. Always hiring editors.', skills: { marketing: 4, video: 2 }, walk: 'creator', person: 'male_adult_04' },
   { id: 'u_ayo', handle: 'ayo', displayName: 'Ayo', color: '#36d399', skin: '#5c3a21', presence: 'Shopping', roles: ['Buyer', 'Gamer'], bio: 'Arcade regular. Sneakerhead.', skills: {}, walk: 'market', person: 'male_adult_11' },
   { id: 'u_marcus', handle: 'marcus', displayName: 'Marcus', color: '#ff5c5c', skin: '#3b2219', presence: 'Working', roles: ['Business Owner'], bio: 'Owner, Ember Grill. Looking for a video creator.', skills: { sales: 3 }, walk: 'grill', owns: 'biz_ember_grill', person: 'male_adult_15' },
   { id: 'u_lena', handle: 'lena', displayName: 'Lena', color: '#ffd166', skin: '#f1c27d', presence: 'Working', roles: ['Business Owner'], bio: 'Owner, Daily Grind café.', skills: { 'customer-service': 4 }, walk: 'grind', owns: 'biz_daily_grind', person: 'chef_female_01' },
   { id: 'u_kemi', handle: 'kemi', displayName: 'Kemi', color: '#ffb703', skin: '#a0663b', presence: 'Online', roles: ['Merchant', 'Advertiser'], bio: 'Founder, Kicks & Co.', skills: { sales: 4, marketing: 3 }, walk: 'kicks', owns: 'biz_kicks_co', person: 'female_adult_15' },
+];
+
+// Passers-by you can stop and talk to (AI-driven when an AI provider is
+// available, scripted otherwise). `dating` marks adults open to flirting.
+export const NPC_PERSONAS = [
+  { id: 'npc-01', name: 'Tomi', age: 27, job: 'Fintech product designer', vibe: 'witty, curious', bio: 'Loves rooftop bars and street food.', dating: true, lines: ['Have you tried the suya at the food court? Life-changing.', 'I design apps by day. By night? Skybar.'] },
+  { id: 'npc-02', name: 'Grace', age: 34, job: 'Nurse at Nova General', vibe: 'calm, caring', bio: 'Night shifts, early yoga.', dating: false, lines: ['Long shift, needed this walk.', 'Drink water and take breaks — nurse’s orders!'] },
+  { id: 'npc-03', name: 'Kwame', age: 23, job: 'Courier and part-time DJ', vibe: 'energetic, funny', bio: 'Delivers by day, spins at Pulse on Fridays.', dating: true, lines: ['Courier life keeps me fit!', 'Pulse Nightclub on Friday — I’m on the decks.'] },
+  { id: 'npc-04', name: 'Sofia', age: 29, job: 'Real-estate agent', vibe: 'confident, sharp', bio: 'Knows every lot in the city.', dating: true, lines: ['Riverside lots are going fast.', 'Nova Heights penthouse? Gorgeous views.'] },
+  { id: 'npc-05', name: 'Ibrahim', age: 41, job: 'Taxi and ride-share driver', vibe: 'chatty, wise', bio: 'Drives 12 hours a day, knows every shortcut.', dating: false, lines: ['Need a ride? I’m on the Wayfare app.', 'Traffic’s calm today, thank God.'] },
+  { id: 'npc-06', name: 'Mei', age: 25, job: 'UGC creator', vibe: 'bubbly, creative', bio: 'Films product reels at Hive Cowork.', dating: true, lines: ['Brands are paying for 15-second reels right now!', 'The green screen at Hive is free for members.'] },
+  { id: 'npc-07', name: 'Daniel', age: 31, job: 'Software engineer', vibe: 'dry humour, nerdy', bio: 'Building an AI startup in a cowork desk.', dating: true, lines: ['Shipping a feature, then tacos.', 'Have you used the AI Studio? Wild.'] },
+  { id: 'npc-08', name: 'Amara', age: 22, job: 'University student (Business)', vibe: 'ambitious, upbeat', bio: 'Studying bookkeeping at Pludor University.', dating: true, lines: ['Just finished my bookkeeping course!', 'Credibility score goes up with every course.'] },
+  { id: 'npc-09', name: 'Luis', age: 37, job: 'Chef', vibe: 'passionate, loud', bio: 'Thinking of renting a food-court stall.', dating: false, lines: ['A stall at the food court is cheaper than a restaurant.', 'Smell that? Ember Grill is firing up.'] },
+  { id: 'npc-10', name: 'Zainab', age: 26, job: 'Hair stylist', vibe: 'warm, gossip-loving', bio: 'Braids at Lumi Salon.', dating: true, lines: ['Book me at Lumi — knotless braids are my thing.', 'Your hair would look amazing with a fade.'] },
+  { id: 'npc-11', name: 'Chris', age: 45, job: 'Car dealer', vibe: 'smooth talker', bio: 'Runs the floor at Nova Motors.', dating: false, lines: ['The Nova GT is a beast. Come test drive it.', 'There’s a car for every budget.'] },
+  { id: 'npc-12', name: 'Ana', age: 30, job: 'Event promoter', vibe: 'social butterfly', bio: 'Throws the best parties in the city.', dating: true, lines: ['Big night at Pulse this weekend!', 'Want on the guest list?'] },
+  { id: 'npc-13', name: 'Femi', age: 33, job: 'Barber', vibe: 'laid-back, funny', bio: 'Owns a chair at Fade Lab.', dating: true, lines: ['Fresh fade? Fade Lab, ask for me.', 'Clean cut, clean mind.'] },
+  { id: 'npc-14', name: 'Priya', age: 28, job: 'Accountant (ACCA)', vibe: 'precise, kind', bio: 'Teaches a finance class on weekends.', dating: true, lines: ['Separate business and personal money!', 'The ACCA courses here are legit.'] },
+  { id: 'npc-15', name: 'Marco', age: 52, job: 'Retired footballer, café regular', vibe: 'storyteller', bio: 'Daily Grind every morning.', dating: false, lines: ['Back in my day this was all grass!', 'Best espresso is at Daily Grind.'] },
+  { id: 'npc-16', name: 'Lola', age: 24, job: 'Fashion model', vibe: 'playful, stylish', bio: 'Shops at Kicks & Co.', dating: true, lines: ['Those sneakers at Kicks & Co though…', 'Have you tried the Avatar Studio? Cute caps.'] },
 ];
 
 export const BOT_REPLIES = {
@@ -107,6 +128,42 @@ export const BUSINESSES = {
       { sku: 'fm-eggs', name: 'Free-range Eggs (12)', price: 3.5, icon: '🥚', desc: 'Local farm.' },
       { sku: 'fm-bread', name: 'Sourdough Loaf', price: 4, icon: '🍞', desc: 'Baked this morning.' },
       { sku: 'fm-fruit', name: 'Fruit Box', price: 12, icon: '🍎', desc: 'Seasonal mix, 3 kg.' },
+    ],
+  },
+  biz_fade_lab: {
+    id: 'biz_fade_lab', name: 'Fade Lab Barbershop', category: 'Barbershop', ownerId: 'u_marcus', claimed: true, verified: true,
+    rating: 4.9, reviewCount: 263, blurb: 'Skin fades, beard sculpting and hot-towel shaves. Book a real chair.', fulfillment: [],
+    services: [
+      { id: 'svc-fade', name: 'Skin Fade', price: 25, durationMin: 40, icon: '💈' },
+      { id: 'svc-beard', name: 'Beard Sculpt', price: 15, durationMin: 25, icon: '🧔' },
+      { id: 'svc-shave', name: 'Hot-towel Shave', price: 20, durationMin: 30, icon: '🪒' },
+      { id: 'svc-kids', name: 'Kids Cut', price: 15, durationMin: 25, icon: '👦' },
+    ],
+  },
+  biz_pulse: {
+    id: 'biz_pulse', name: 'Pulse Nightclub & Skybar', category: 'Nightclub & Bar', ownerId: 'u_jay', claimed: true, verified: true, ageRestricted: true,
+    rating: 4.6, reviewCount: 402, blurb: '18+. House, afrobeats and amapiano every weekend. Rooftop Skybar for cocktails and views.', fulfillment: ['pickup'], prepMinutes: 3, reservations: true,
+    catalog: [
+      { sku: 'pl-chapman', name: 'Chapman (mocktail)', price: 6, icon: '🍹', desc: 'Fruity, fizzy, no alcohol.' },
+      { sku: 'pl-mojito', name: 'Mojito', price: 9, icon: '🍸', desc: 'Rum, lime, mint. 18+.' },
+      { sku: 'pl-lager', name: 'Craft Lager', price: 7, icon: '🍺', desc: 'Local brewery. 18+.' },
+      { sku: 'pl-wings', name: 'Party Wings', price: 10, icon: '🍗', desc: 'Peri-peri, 8 pieces.' },
+    ],
+    services: [
+      { id: 'svc-vip', name: 'VIP Table (4 guests)', price: 120, durationMin: 240, icon: '🥂' },
+      { id: 'svc-entry', name: 'Guest List Entry', price: 10, durationMin: 240, icon: '🎟️' },
+    ],
+  },
+  biz_nova_motors: {
+    id: 'biz_nova_motors', name: 'Nova Motors', category: 'Car Dealership', ownerId: 'u_jay', claimed: true, verified: true,
+    rating: 4.4, reviewCount: 88, blurb: 'Virtual cars for the World, and real cars from partner dealers: book a test drive or reserve with a deposit.', fulfillment: ['pickup'], prepMinutes: 0, reservations: true,
+    catalog: [
+      { sku: 'nm-deposit-ev', name: 'Reserve: City EV (real) · deposit', price: 100, icon: '🚙', desc: 'Refundable deposit. A partner dealer contacts you to complete the purchase.' },
+      { sku: 'nm-deposit-suv', name: 'Reserve: Family SUV (real) · deposit', price: 150, icon: '🚐', desc: 'Refundable deposit with a partner dealer.' },
+    ],
+    services: [
+      { id: 'svc-testdrive', name: 'Test Drive (real car)', price: 0, durationMin: 45, icon: '🔑' },
+      { id: 'svc-finance', name: 'Finance consultation', price: 0, durationMin: 30, icon: '📄' },
     ],
   },
   biz_lumi_salon: {
@@ -280,6 +337,9 @@ export const COURSES = [
 
 // Ads Manager campaigns that bought WORLD placements.
 export const CAMPAIGNS = [
+  { id: 'ad_pulse', advertiserId: 'biz_pulse', headline: 'FRIDAY AT PULSE', sub: '18+ · DJ Kwame · Skybar cocktails', cta: 'Get on the list', bg: ['#ff2bd6', '#2d0b59'], target: { type: 'place', id: 'pulse-club' }, placements: ['*'], ageRestricted: true },
+  { id: 'ad_motors', advertiserId: 'biz_nova_motors', headline: 'DRIVE THE CITY', sub: 'Scooters to hypercars · Nova Motors', cta: 'See the cars', bg: ['#0f2027', '#4cc9f0'], target: { type: 'place', id: 'nova-motors' }, placements: ['*'] },
+  { id: 'ad_fade', advertiserId: 'biz_fade_lab', headline: 'FRESH FADE, REAL CHAIR', sub: 'Book Fade Lab in two taps', cta: 'Book now', bg: ['#1d3557', '#e63946'], target: { type: 'place', id: 'fade-lab' }, placements: ['*'] },
   { id: 'ad_kicks_spring', advertiserId: 'biz_kicks_co', headline: 'SPRING DROP', sub: 'Nova Runner 2 · in store now', cta: 'Shop the drop', bg: ['#ff7a18', '#af002d'], target: { type: 'place', id: 'kicks-co' }, placements: ['*'] },
   { id: 'ad_ember', advertiserId: 'biz_ember_grill', headline: 'SUYA NIGHTS', sub: 'Ember Grill · order or reserve', cta: 'See the menu', bg: ['#f12711', '#f5af19'], target: { type: 'place', id: 'ember-grill' }, placements: ['*'] },
   { id: 'ad_academy', advertiserId: 'pludor_academy', headline: 'LEARN → EARN', sub: 'Video Editing in 12 minutes', cta: 'Start course', bg: ['#11998e', '#38ef7d'], target: { type: 'course', id: 'c_video_editing' }, placements: ['*'] },
@@ -292,6 +352,8 @@ export const EVENTS = [
   { id: 'ev_lunch_live', title: 'Live cook-along with Marcus', placeId: 'ember-grill', hours: [12, 14], ticket: null, kind: 'live-selling' },
   { id: 'ev_night_market', title: 'Night Market', placeId: 'nova-market', hours: [18, 23], ticket: null, kind: 'market' },
   { id: 'ev_tourney', title: 'Arcade Tournament', placeId: 'arcade', hours: [19, 21], ticket: null, kind: 'tournament' },
+  { id: 'ev_clubnight', title: 'Friday Club Night · DJ Kwame', placeId: 'pulse-club', hours: [22, 27], ticket: { price: 10 }, kind: 'party', ageRestricted: true },
+  { id: 'ev_summit', title: 'Pludor Summit: Building a business in the World', placeId: 'summit-center', hours: [10, 12], ticket: null, kind: 'conference' },
   { id: 'ev_concert', title: 'Plaza Concert: Nova Sound', placeId: 'central-plaza', hours: [20, 22.5], ticket: { price: 4 }, kind: 'concert' },
 ];
 

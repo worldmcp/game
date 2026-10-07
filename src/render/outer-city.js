@@ -186,10 +186,10 @@ export function createOuterCity({ half = 110, extent = 330, roadWidth = 10, rive
     root.add(mesh);
   });
   const crownMat = new THREE.MeshStandardMaterial({ color: '#cfe8ff', emissive: '#7cc7ff', emissiveIntensity: 0.3 });
-  out.nightMats.push({ mat: crownMat, day: 0.3, night: 2.2 });
+  out.nightMats.push({ mat: crownMat, day: 0.3, night: 1.1 });
   if (crownGeos.length) root.add(new THREE.Mesh(mergeGeometries(crownGeos), crownMat));
   const spireMat = new THREE.MeshStandardMaterial({ color: '#c8d0d8', metalness: 0.8, roughness: 0.3, emissive: '#ff4060', emissiveIntensity: 0.2 });
-  out.nightMats.push({ mat: spireMat, day: 0.2, night: 1.6 });
+  out.nightMats.push({ mat: spireMat, day: 0.2, night: 0.9 });
   if (spireGeos.length) root.add(new THREE.Mesh(mergeGeometries(spireGeos), spireMat));
   const walk = new THREE.Mesh(mergeGeometries(sideGeos), new THREE.MeshStandardMaterial({ color: '#b9b4ab', roughness: 0.9 }));
   walk.receiveShadow = true;
