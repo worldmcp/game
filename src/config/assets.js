@@ -3,29 +3,32 @@
 // changing one path here.
 
 const base = new URL('../../assets/', import.meta.url).href;
+// Hosts that refuse .glb get a build where models are embedded glTF JSON
+// (scripts/build-web.mjs); the page sets PLUDOR_MODEL_EXT to match.
+const ext = globalThis.PLUDOR_MODEL_EXT || '.glb';
 
 export const MODELS = {
   // Animation sets (Microsoft Rocketbox, motion capture): idle, walk, run, wave, talk.
-  anims_m: { url: `${base}models/people/anims_m.glb`, kind: 'anims' },
-  anims_f: { url: `${base}models/people/anims_f.glb`, kind: 'anims' },
+  anims_m: { url: `${base}models/people/anims_m${ext}`, kind: 'anims' },
+  anims_f: { url: `${base}models/people/anims_f${ext}`, kind: 'anims' },
   // Vehicles
-  car: { url: `${base}models/vehicles/car.glb`, length: 4.4, kind: 'vehicle' },
+  car: { url: `${base}models/vehicles/car${ext}`, length: 4.4, kind: 'vehicle' },
   // Products (Khronos glTF Sample Assets)
-  shoe: { url: `${base}models/products/shoe.glb`, size: 0.32 },
-  watch: { url: `${base}models/products/watch.glb`, size: 0.12 },
-  camera: { url: `${base}models/products/camera.glb`, size: 0.28 },
-  boombox: { url: `${base}models/products/boombox.glb`, size: 0.5 },
-  lantern: { url: `${base}models/products/lantern.glb`, size: 0.6 },
-  bottle: { url: `${base}models/products/bottle.glb`, size: 0.26 },
-  avocado: { url: `${base}models/products/avocado.glb`, size: 0.12 },
-  chair: { url: `${base}models/products/chair.glb`, size: 0.95 },
-  sofa: { url: `${base}models/products/sofa.glb`, size: 2.1 },
-  pouf: { url: `${base}models/products/pouf.glb`, size: 0.6 },
-  plant: { url: `${base}models/products/plant.glb`, size: 1.1 },
-  vase: { url: `${base}models/products/vase.glb`, size: 0.5 },
-  fridge: { url: `${base}models/products/fridge.glb`, size: 2 },
-  toycar: { url: `${base}models/products/toycar.glb`, size: 0.3 },
-  olives: { url: `${base}models/products/olives.glb`, size: 0.22 },
+  shoe: { url: `${base}models/products/shoe${ext}`, size: 0.32 },
+  watch: { url: `${base}models/products/watch${ext}`, size: 0.12 },
+  camera: { url: `${base}models/products/camera${ext}`, size: 0.28 },
+  boombox: { url: `${base}models/products/boombox${ext}`, size: 0.5 },
+  lantern: { url: `${base}models/products/lantern${ext}`, size: 0.6 },
+  bottle: { url: `${base}models/products/bottle${ext}`, size: 0.26 },
+  avocado: { url: `${base}models/products/avocado${ext}`, size: 0.12 },
+  chair: { url: `${base}models/products/chair${ext}`, size: 0.95 },
+  sofa: { url: `${base}models/products/sofa${ext}`, size: 2.1 },
+  pouf: { url: `${base}models/products/pouf${ext}`, size: 0.6 },
+  plant: { url: `${base}models/products/plant${ext}`, size: 1.1 },
+  vase: { url: `${base}models/products/vase${ext}`, size: 0.5 },
+  fridge: { url: `${base}models/products/fridge${ext}`, size: 2 },
+  toycar: { url: `${base}models/products/toycar${ext}`, size: 0.3 },
+  olives: { url: `${base}models/products/olives${ext}`, size: 0.22 },
 };
 
 // Realistic people (Microsoft Rocketbox Avatar Library, MIT). `core` avatars
@@ -48,7 +51,7 @@ export const PEOPLE = [
   { id: 'chef_female_01', gender: 'f', label: 'Chef · Lena' },
   { id: 'construction_male_01', gender: 'm', label: 'Builder · Joe' },
 ];
-for (const p of PEOPLE) MODELS[p.id] = { url: `${base}models/people/${p.id}.glb`, kind: 'person' };
+for (const p of PEOPLE) MODELS[p.id] = { url: `${base}models/people/${p.id}${ext}`, kind: 'person' };
 
 export const TEXTURES = {
   waterNormals: `${base}textures/waternormals.jpg`,
