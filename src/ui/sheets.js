@@ -2,7 +2,7 @@
 // walked into, a person you approached, a parcel, a billboard …). Each view
 // renders from adapter data and every action goes back through the adapter.
 
-import { html, raw, esc, money, timeAgo, PRESENCE_COLORS } from './dom.js';
+import { html, raw, esc, money, timeAgo, PRESENCE_COLORS, isPressed, afterPress } from './dom.js';
 import { PLACES, PARCELS, AGENTS, WORLD, BILLBOARDS, entrancePoint, PLAZA } from '../config/nova-city.js';
 import { ECONOMY } from '../config/economy.js';
 import { CITY_BY_COUNTRY } from '../config/locale.js';
@@ -61,6 +61,8 @@ export class Sheets {
     this.app.endStudio?.();
     this.app.talkingNpc = null;
     this.stack = [];
+    this._renderId += 1; // drop any render still in flight
+    this._markup = null;
     this.el.classList.remove('open');
     this.el.innerHTML = '';
     this.app.root.classList.remove('pw-sheet-open');
@@ -104,10 +106,19 @@ export class Sheets {
     }
     if (id !== this._renderId || this.top !== t) return;
     const title = typeof v.title === 'function' ? v.title(this.app, t.props) : v.title;
-    this.el.innerHTML = html`<header class="pw-sheet-head">
+    const markup = html`<header class="pw-sheet-head">
         ${this.stack.length > 1 ? html`<button class="pw-icon-btn" ${A('back')} aria-label="Back">←</button>` : ''}
         <h2>${title}</h2><button class="pw-icon-btn" ${A('close')} aria-label="Close">✕</button></header>
       <div class="pw-sheet-body">${content}</div>`.s;
+    // Live refreshes that change nothing leave the DOM alone, and a refresh
+    // never lands under a finger (that is what made ✕ and buttons "dead").
+    if (keepScroll && markup === this._markup && this.el.classList.contains('open')) return;
+    if (keepScroll && isPressed(this.el)) {
+      afterPress(this.el, 'sheet', () => this.top === t && this.render(true));
+      return;
+    }
+    this._markup = markup;
+    this.el.innerHTML = markup;
     this.el.classList.add('open');
     this.app.root.classList.add('pw-sheet-open');
     const nb = this.el.querySelector('.pw-sheet-body');
@@ -2017,7 +2028,7 @@ async function ridesBoard(app) {
       <div class="pw-row">${btn('🧭 Navigate', 'go', { x: target.x, z: target.z, label: toPickup ? active.riderName : active.destName })}${btn(toPickup ? '👋 Pick up rider' : '✅ Drop off', toPickup ? 'ridePickup' : 'rideDropoff', active.id, 'ghost')}</div></div>`;
   }
   return html`<p class="pw-muted">Drive for Wayfare: take ride requests from people in the city, pick them up and drop them off — paid on arrival (${Math.round((1 - (ECONOMY.fees.rides ?? 0.15)) * 100)}% of the fare).</p>
-    ${j.canDrive ? '' : html`<div class="pw-note">🚗 You need a vehicle to drive. ${btn('Get one', 'view', { view: 'vstore', props: {} }, 'sm')} ${btn('Nova Motors', 'go', goArg(placeById('nova-motors')), 'sm ghost')}</div>`}
+    ${j.canDrive ? '' : html`<div class="pw-note">🚗 You need a car to give rides (scooters and bikes are for deliveries). ${btn('Get one', 'view', { view: 'vstore', props: {} }, 'sm')} ${btn('Nova Motors', 'go', goArg(placeById('nova-motors')), 'sm ghost')}</div>`}
     ${card}
     <h4>Ride requests (${j.open.length})</h4>${j.open.length ? html`<div class="pw-list">${j.open.map((r) => html`<div class="pw-result"><div><b>${r.riderName} → ${r.destName}</b><small>${d(r.pickup)} m to pickup · from ${r.pickupName}</small></div><div class="pw-row tight"><b class="pw-pay">${$m(r.payout)}</b>${active || !j.canDrive ? '' : btn('Accept', 'rideAccept', r.id, 'sm')}</div></div>`)}</div>` : empty('No ride requests right now.')}
     ${j.done.length ? html`<h4>Completed</h4><div class="pw-list">${j.done.map((r) => html`<div class="pw-tx"><div><b>${r.riderName}</b><small>to ${r.destName}</small></div><b class="pos">+${$m(r.payout)}</b></div>`)}</div>` : ''}`;

@@ -362,7 +362,8 @@ export function bindEconomyChain(A) {
   // demo riders post requests so drivers can always earn.
   const RIDE_FEE = fees.rides ?? 0.15;
   const fareFor = (from, to) => money(3 + Math.hypot(to.x - from.x, to.z - from.z) * 0.04);
-  const ownsVehicle = (st) => (eco.virtualItems || []).some((i) => i.kind === 'car' && (st.owned || []).includes(i.id));
+  // Carrying a passenger takes a car (scooters and bikes are for couriers).
+  const ownsVehicle = (st) => (eco.virtualItems || []).some((i) => i.kind === 'car' && i.vehicle === 'car' && (st.owned || []).includes(i.id));
   const rideById = (id) => (A._world().rides || {})[id];
   const updateRide = (id, patch) => A._mutateWorld((w) => {
     const r = (w.rides || {})[id];
@@ -462,7 +463,7 @@ export function bindEconomyChain(A) {
     }),
     accept: A._wrap((rideId) => {
       const st = A._load();
-      if (!ownsVehicle(st)) throw new PludorError('no_vehicle', 'You need a vehicle to drive for Wayfare — get one at Nova Motors or the Pludor Store.');
+      if (!ownsVehicle(st)) throw new PludorError('no_vehicle', 'You need a car to drive for Wayfare (scooters and bikes can only deliver) — get one at Nova Motors or the Pludor Store.');
       if (Object.values(A._world().rides || {}).some((r) => r.driverId === A.me.id && ['accepted', 'on_trip'].includes(r.status))) throw new PludorError('limit', 'Finish your current ride first.');
       const r = updateRide(rideId, (x) => {
         if (x.status !== 'requested') throw new PludorError('taken', 'Another driver took this ride.');

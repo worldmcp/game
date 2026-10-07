@@ -158,3 +158,17 @@ test('nav grid returns a walkable path even when start and goal share a cell', (
   assert.ok(p.length >= 2);
   assert.deepEqual(p.at(-1), { x: 1.4, z: 1.3 });
 });
+
+test('UI templates never double-escape action arguments (dead buttons regression)', async () => {
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const { html } = await import('../src/ui/dom.js');
+  // html`` already escapes, so its output must round-trip through JSON.parse
+  // after the browser decodes the attribute once.
+  const out = html`<b data-arg='${JSON.stringify({ id: 'enter', label: "Mama's" })}'></b>`.s;
+  const attr = out.match(/data-arg='([^']*)'/)[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  assert.deepEqual(JSON.parse(attr), { id: 'enter', label: "Mama's" });
+  for (const f of readdirSync(new URL('../src/ui/', import.meta.url))) {
+    const src = readFileSync(new URL(`../src/ui/${f}`, import.meta.url), 'utf8');
+    assert.ok(!/'\$\{esc\(JSON\.stringify/.test(src), `${f}: esc() inside html\`\` double-escapes data-arg`);
+  }
+});

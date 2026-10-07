@@ -443,6 +443,16 @@ export class WorldApp {
       return this.openRef(o.userData.ref);
     }
     const pt = new THREE.Vector3();
+    if (this.inside) {
+      // Tap-to-walk indoors: straight line, walls still collide.
+      const floor = new THREE.Plane(new THREE.Vector3(0, 1, 0), -this.floorY);
+      if (this.raycaster.ray.intersectPlane(floor, pt)) {
+        this.nav = { path: [{ x: this.player.position.x, z: this.player.position.z }, { x: pt.x, z: pt.z }], i: 1, label: null, target: { x: pt.x, z: pt.z } };
+        this.navMarker.position.set(pt.x, this.floorY + 0.05, pt.z);
+        this.navMarker.visible = true;
+      }
+      return;
+    }
     if (this.raycaster.ray.intersectPlane(this.groundPlane, pt)) this.navigateTo({ x: pt.x, z: pt.z }, null, true);
   }
 
@@ -677,7 +687,20 @@ export class WorldApp {
   }
 
   // ───────────────────────── navigation ─────────────────────────
-  navigateTo(target, label = null, quiet = false) {
+  navigateTo(target, label = null, quiet = false, enter = null) {
+    // Indoors: step out (through every door — apartment → lobby → street)
+    // and route from the front door.
+    if (this.inside) {
+      if (!quiet) this.hud.toast(`Heading out to ${label || 'your destination'}`, '🚪');
+      const out = (n) => {
+        if (!this.inside) return this.navigateTo(target, label, quiet, enter);
+        if (n > 4) return;
+        this.exitBuilding();
+        setTimeout(() => out(n + 1), 950);
+      };
+      out(0);
+      return true;
+    }
     const from = { x: this.player.position.x, z: this.player.position.z };
     const path = this.navGrid.find(from, target);
     if (!path) {
@@ -685,7 +708,8 @@ export class WorldApp {
       return false;
     }
     this.sitting = false;
-    this.nav = { path, i: 1, label, target };
+    this.nav = { path, i: 1, label, target, enter };
+    if (this.driving && !quiet) this.hud.toast(`Route set — drive to the marker${label ? ` at ${label}` : ''}`, '🧭');
     this.navMarker.position.set(target.x, 0.25, target.z);
     this.navMarker.visible = true;
     this.hud.setNav(label);
@@ -984,11 +1008,8 @@ export class WorldApp {
     if (this.inside?.key === `place:${id}`) return;
     const e = entrancePoint(p, 1.2);
     const pp = this.player.position;
-    if (!this.inside && Math.hypot(e.x - pp.x, e.z - pp.z) < 6) return this.enterBuilding('place', id);
-    if (this.inside) this.exitBuilding();
-    setTimeout(() => {
-      if (this.navigateTo(e, p.name)) this.nav.enter = { type: 'place', id };
-    }, this.inside ? 900 : 0);
+    if (!this.inside && !this.driving && Math.hypot(e.x - pp.x, e.z - pp.z) < 6) return this.enterBuilding('place', id);
+    this.navigateTo(e, p.name, false, this.driving ? null : { type: 'place', id });
   }
 
   _rot(facing) {
@@ -1320,6 +1341,11 @@ export class WorldApp {
   _driveCar(dt, t) {
     const d = this.driving;
     const pos = this.player.position;
+    if (this.nav && Math.hypot(this.nav.target.x - pos.x, this.nav.target.z - pos.z) < 9) {
+      const { label } = this.nav;
+      this.cancelNav();
+      this.hud.toast(`Arrived${label ? ` at ${label}` : ''} — press F (or Park) to get out`, '📍');
+    }
     const { ix, iz, run } = this._input();
     const max = d.item.speed * (run ? 1.15 : 1);
     const onRoad = DISTRICT.roads.some((r) => Math.abs(pos.x - r) < 5.5 || Math.abs(pos.z - r) < 5.5);
@@ -1423,6 +1449,7 @@ export class WorldApp {
       const d = Math.hypot(vx, vz);
       if (d < 0.6) {
         this.nav.i += 1;
+        this.nav.bestD = undefined;
         if (this.nav.i >= this.nav.path.length) {
           const { label, enter } = this.nav;
           this.cancelNav();
@@ -1432,6 +1459,15 @@ export class WorldApp {
       } else {
         dx = vx / d;
         dz = vz / d;
+        // Blocked (a wall, a crowd) for 2 s → give up instead of moonwalking.
+        const n = this.nav;
+        if (n.bestD === undefined || d < n.bestD - 0.2) {
+          n.bestD = d;
+          n.bestAt = t;
+        } else if (t - n.bestAt > 3.5) {
+          this.cancelNav();
+          this.hud.toast('Path blocked — try another way', '🚧');
+        }
       }
     }
     const len = Math.hypot(dx, dz);

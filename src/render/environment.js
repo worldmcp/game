@@ -22,7 +22,13 @@ export class Environment {
     u.turbidity.value = 2.4;
     u.rayleigh.value = 1.25;
     u.mieCoefficient.value = 0.003;
-    u.mieDirectionalG.value = 0.82;
+    u.mieDirectionalG.value = 0.72; // smaller forward-scatter halo round the sun
+    // The sky shader outputs HDR values in the thousands at the sun disc,
+    // which bloom smears across the screen whenever you face it. Clamp it so
+    // the sun reads bright but never blinds.
+    this.sky.material.onBeforeCompile = (sh) => {
+      sh.fragmentShader = sh.fragmentShader.replace('gl_FragColor = vec4( retColor, 1.0 );', 'gl_FragColor = vec4( min( retColor, vec3( 0.95 ) ), 1.0 );');
+    };
     scene.add(this.sky);
     this.sun = new THREE.Vector3();
     this.pmrem = new THREE.PMREMGenerator(renderer);
@@ -118,7 +124,9 @@ export class PostFX {
     const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
     this.composer = new EffectComposer(renderer, rt);
     this.renderPass = new RenderPass(scene, camera);
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.35, 0.6, 0.86);
+    // Small radius: lamps and neon get a tight glow instead of a screen-wide
+    // flare when seen from far away.
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.3, 0.25, 0.9);
     this.composer.addPass(this.renderPass);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
@@ -133,8 +141,8 @@ export class PostFX {
   setNight(night) {
     if (!this.enabled) return;
     // Gentle at night: neon should glow, not blind.
-    this.bloom.strength = 0.16 + night * 0.3;
-    this.bloom.threshold = 0.92 - night * 0.12;
+    this.bloom.strength = 0.12 + night * 0.2;
+    this.bloom.threshold = 0.96 - night * 0.08;
   }
 
   // Interiors: bright walls under bloom read as haze, so only true

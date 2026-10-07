@@ -53,3 +53,45 @@ export const PRESENCE_COLORS = {
   Online: '#36d399', Away: '#ffd166', Busy: '#ff5c5c', Working: '#7c9cff', Shopping: '#ff8a5b', Playing: '#e879f9',
   Learning: '#5eead4', 'Available for Work': '#36d399', Hiring: '#b794ff', 'In Conversation': '#5ce1e6', 'At Event': '#ff5ce1', Invisible: '#6b7280', Offline: '#6b7280',
 };
+
+// ── Tap safety ──
+// A click only fires if the element under the finger survives from press to
+// release. Panels re-render on live updates, so writes into an element that
+// is being pressed wait until the finger lifts, and identical HTML is never
+// rewritten (keeps hover, focus and scroll too).
+let pressed = null;
+const deferred = new Map();
+if (typeof window !== 'undefined') {
+  addEventListener('pointerdown', (e) => (pressed = e.target), true);
+  const release = () => setTimeout(() => {
+    pressed = null;
+    const jobs = [...deferred.values()];
+    deferred.clear();
+    for (const fn of jobs) fn();
+  }, 40);
+  addEventListener('pointerup', release, true);
+  addEventListener('pointercancel', release, true);
+}
+
+export function isPressed(el) {
+  return !!(pressed && el && el.contains(pressed));
+}
+
+// Run fn now, or once the press inside el ends (latest fn per key wins).
+export function afterPress(el, key, fn) {
+  if (isPressed(el)) {
+    deferred.set(key, fn);
+    return false;
+  }
+  fn();
+  return true;
+}
+
+export function setHTML(el, str) {
+  if (!el || el._pwHtml === str) return;
+  afterPress(el, el, () => {
+    if (el._pwHtml === str) return;
+    el.innerHTML = str;
+    el._pwHtml = str;
+  });
+}

@@ -295,12 +295,12 @@ test('rides: rider pays on arrival via demo driver; players with a car drive for
   let jobs = await driver.rides.jobs();
   assert.equal(jobs.canDrive, false);
   const job = jobs.open[0];
-  await assert.rejects(driver.rides.accept(job.id), /need a vehicle/);
+  await assert.rejects(driver.rides.accept(job.id), /need a car/);
   const k = 'pludor-demo:user:u_driver';
   const st = storage.get(k);
   st.points = 1000;
   storage.set(k, st);
-  await driver.shop.buyVirtual('car-scooter');
+  await driver.shop.buyVirtual('car-city');
   await driver.rides.accept(job.id);
   await assert.rejects(driver.rides.pickup(job.id, { x: 999, z: 999 }), /Drive to/);
   await driver.rides.pickup(job.id, job.pickup);

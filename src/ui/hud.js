@@ -3,7 +3,7 @@
 // button, toasts, notifications, nameplates, call overlay, joystick).
 
 import * as THREE from 'three';
-import { html, esc, money, raw, PRESENCE_COLORS } from './dom.js';
+import { html, money, raw, PRESENCE_COLORS, setHTML, isPressed, afterPress } from './dom.js';
 import { TIPS } from '../config/tips.js';
 import { Radio } from './radio.js';
 import { PLACES, PARCELS, AGENTS, WORLD, DISTRICT, PLAZA, footprint, entrancePoint, zoneAt } from '../config/nova-city.js';
@@ -202,15 +202,15 @@ export class Hud {
       } else av.textContent = s.profile.displayName[0]?.toUpperCase() || 'P';
     }
     this.q('.pw-name').textContent = s.profile.displayName;
-    this.q('.pw-rank').innerHTML = html`<span class="pw-rank-pill">Level ${lvl.level}</span> <span>${s.progress.rank.title}</span> <span class="pw-dot" style="background:${PRESENCE_COLORS[s.profile.presence] || '#36d399'}"></span>`.s;
+    setHTML(this.q('.pw-rank'), html`<span class="pw-rank-pill">Level ${lvl.level}</span> <span>${s.progress.rank.title}</span> <span class="pw-dot" style="background:${PRESENCE_COLORS[s.profile.presence] || '#36d399'}"></span>`.s);
     if (this.app.flags.WORLD_NEEDS_ENABLED) {
       const icons = { energy: '⚡', hunger: '🍔', social: '💬', fun: '🎉', hygiene: '🚿' };
-      this.q('.pw-needs').innerHTML = Object.entries(ECONOMY.needs)
+      setHTML(this.q('.pw-needs'), Object.entries(ECONOMY.needs)
         .map(([k, def]) => {
           const v = Math.round(s.needs[k] ?? def.start);
           return html`<div class="pw-need ${v < 30 ? 'low' : ''}" title="${def.label} ${v}/100"><span>${icons[k] || '•'}</span><i><b style="width:${v}%;background:${def.color}"></b></i></div>`.s;
         })
-        .join('');
+        .join(''));
     }
     this._renderQuest();
     this._renderLive();
@@ -221,17 +221,17 @@ export class Hud {
     const quests = s.progress.quests.filter((q) => q.state?.active && !q.state?.done);
     const el = this.q('.pw-quest');
     if (!quests.length) {
-      el.innerHTML = html`<header><b>Active Quest</b></header><p class="pw-muted">All quests complete. Host an event or open a business to keep growing.</p>`.s;
+      setHTML(el, html`<header><b>Active Quest</b></header><p class="pw-muted">All quests complete. Host an event or open a business to keep growing.</p>`.s);
       return;
     }
     const q = quests[0];
     const step = currentStep(q, q.state);
     const done = q.steps.filter((st, i) => q.state.steps[i] >= st.count).length;
-    el.innerHTML = html`<header><b><span class="pw-qicon">P</span>${q.sponsor ? 'Sponsored Quest' : 'Active Quest'}</b><button class="pw-link-btn" data-hud="quest">All (${quests.length})</button></header>
+    setHTML(el, html`<header><b><span class="pw-qicon">P</span>${q.sponsor ? 'Sponsored Quest' : 'Active Quest'}</b><button class="pw-link-btn" data-hud="quest">All (${quests.length})</button></header>
       <div class="pw-quest-title">${q.title}</div>
       <p class="pw-quest-desc">${step ? step.step.label : q.desc}${step && step.step.count > 1 ? ` (${Math.min(step.have, step.step.count)}/${step.step.count})` : ''}</p>
       <div class="pw-qbar"><i style="width:${Math.round((done / q.steps.length) * 100)}%"></i></div>
-      <div class="pw-qfoot"><span>${done}/${q.steps.length}</span><b class="pw-qreward">⭐ +${q.rewardXp} XP${q.rewardCoupon ? ` · ${q.rewardCoupon.percentOff}% off` : ''}</b></div>`.s;
+      <div class="pw-qfoot"><span>${done}/${q.steps.length}</span><b class="pw-qreward">⭐ +${q.rewardXp} XP${q.rewardCoupon ? ` · ${q.rewardCoupon.percentOff}% off` : ''}</b></div>`.s);
   }
 
   _renderLive() {
@@ -242,9 +242,9 @@ export class Hud {
     const e = live[0];
     const place = PLACES.find((p) => p.id === e.placeId);
     const target = place ? entrancePoint(place) : { x: 0, z: 12 };
-    el.innerHTML = html`<header><b><span class="pw-live-dot"></span>Live now</b>${live.length > 1 ? html`<button class="pw-link-btn" data-sheet="events">+${live.length - 1} more</button>` : ''}</header>
+    setHTML(el, html`<header><b><span class="pw-live-dot"></span>Live now</b>${live.length > 1 ? html`<button class="pw-link-btn" data-sheet="events">+${live.length - 1} more</button>` : ''}</header>
       <div class="pw-quest-title">${e.title}</div><p class="pw-muted">${e.placeName}${e.ticket ? ` · ticket ${money(e.ticket.price)}` : ' · free'}</p>
-      <div class="pw-row"><button class="pw-btn sm" data-hud="go" data-arg='${esc(JSON.stringify({ ...target, label: e.placeName }))}'>Go</button><button class="pw-btn sm ghost" data-sheet="events">Details</button></div>`.s;
+      <div class="pw-row"><button class="pw-btn sm" data-hud="go" data-arg='${JSON.stringify({ ...target, label: e.placeName })}'>Go</button><button class="pw-btn sm ghost" data-sheet="events">Details</button></div>`.s);
   }
 
   setNearby(list) {
@@ -253,14 +253,14 @@ export class Hud {
     const sig = list.map((p) => `${p.id}:${Math.round(p.dist / 3)}:${p.presence}:${this._followed?.has(p.id)}`).join('|');
     if (sig === this._nearSig) return;
     this._nearSig = sig;
-    ul.innerHTML = list.length
+    setHTML(ul, list.length
       ? list.slice(0, 4).map((p) => {
         const pic = this.app.portrait?.(this.app.personOf?.(p.id));
         const following = this._followed?.has(p.id);
-        return html`<li><button class="pw-near-who" data-hud="open" data-arg='${esc(JSON.stringify({ type: 'player', id: p.id }))}'><span class="pw-av sm ${pic ? 'pic' : ''}" style="background-color:${p.color};${pic ? `background-image:url(${pic})` : ''}">${pic ? '' : (p.displayName || '?')[0]}</span><span class="pw-near-txt"><b>${p.displayName || p.name}</b><small>${Math.round(p.dist)}m · ${p.presence}</small></span></button>
-          <button class="pw-follow ${following ? 'on' : ''}" data-hud="follow" data-arg='${esc(JSON.stringify(p.id))}'>${following ? 'Following' : 'Follow'}</button></li>`.s;
+        return html`<li><button class="pw-near-who" data-hud="open" data-arg='${JSON.stringify({ type: 'player', id: p.id })}'><span class="pw-av sm ${pic ? 'pic' : ''}" style="background-color:${p.color};${pic ? `background-image:url(${pic})` : ''}">${pic ? '' : (p.displayName || '?')[0]}</span><span class="pw-near-txt"><b>${p.displayName || p.name}</b><small>${Math.round(p.dist)}m · ${p.presence}</small></span></button>
+          <button class="pw-follow ${following ? 'on' : ''}" data-hud="follow" data-arg='${JSON.stringify(p.id)}'>${following ? 'Following' : 'Follow'}</button></li>`.s;
       }).join('')
-      : '<li class="pw-muted">No one nearby. Head to the plaza to meet people.</li>';
+      : '<li class="pw-muted">No one nearby. Head to the plaza to meet people.</li>');
   }
 
   setZone(name) {
@@ -278,14 +278,19 @@ export class Hud {
   // ───────── contextual interaction prompt ─────────
   setFocus(focus) {
     const el = this.q('.pw-prompt');
+    // Never swap or hide the prompt under a finger: finish the tap first.
+    if (isPressed(el)) {
+      afterPress(el, 'focus', () => this.setFocus(this.app.focus));
+      return;
+    }
     if (!focus) {
       el.hidden = true;
       return;
     }
     const acts = this._actionsFor(focus);
     el.hidden = false;
-    el.innerHTML = html`<div class="pw-prompt-head"><kbd>E</kbd><div><b>${this._focusTitle(focus)}</b><small>${this._focusSub(focus)}</small></div></div>
-      <div class="pw-prompt-acts">${acts.map((a, i) => html`<button class="pw-btn ${i ? 'ghost' : ''} sm" data-hud="focus" data-arg='${esc(JSON.stringify(a.id))}'>${a.icon} ${a.label}</button>`)}</div>`.s;
+    setHTML(el, html`<div class="pw-prompt-head"><kbd>E</kbd><div><b>${this._focusTitle(focus)}</b><small>${this._focusSub(focus)}</small></div></div>
+      <div class="pw-prompt-acts">${acts.map((a, i) => html`<button class="pw-btn ${i ? 'ghost' : ''} sm" data-hud="focus" data-arg='${JSON.stringify(a.id)}'>${a.icon} ${a.label}</button>`)}</div>`.s);
     this._acts = acts;
   }
 
@@ -780,6 +785,7 @@ export class Hud {
     this._bizT = now;
     const pp = this.app.player.position;
     const el = this.q('.pw-biz');
+    if (isPressed(el)) return;
     let best = null;
     for (const p of PLACES) {
       if (!['cafe', 'restaurant', 'store', 'service', 'market', 'foodcourt', 'hotel', 'supermarket', 'apartments', 'cowork', 'dealer', 'nightclub'].includes(p.kind)) continue;
@@ -799,8 +805,8 @@ export class Hud {
     }
     this._bizId = best.p.id;
     el.hidden = false;
-    el.innerHTML = html`<div class="pw-biz-row"><div class="pw-biz-icon" style="--accent:${best.p.accent}">${KIND_ICON[best.p.kind]}</div><div class="pw-biz-txt"><b>${best.p.name}</b><small>${v.kindLabel} · <span class="pw-biz-dist">${Math.round(best.d)} m</span></small>${v.rating ? html`<small class="pw-stars">★ ${v.rating.toFixed(1)}</small>` : ''}</div></div>
-      <div class="pw-biz-acts"><button class="pw-btn sm" data-hud="visit" data-arg='${esc(JSON.stringify(best.p.id))}'>Visit</button><button class="pw-btn sm ghost" data-hud="open" data-arg='${esc(JSON.stringify({ type: 'place', id: best.p.id }))}'>${v.commerce ? 'Order' : 'Open'}</button><button class="pw-btn sm ghost" data-hud="ask" data-arg='${esc(JSON.stringify(best.p.name))}'>More</button></div>`.s;
+    setHTML(el, html`<div class="pw-biz-row"><div class="pw-biz-icon" style="--accent:${best.p.accent}">${KIND_ICON[best.p.kind]}</div><div class="pw-biz-txt"><b>${best.p.name}</b><small>${v.kindLabel} · <span class="pw-biz-dist">${Math.round(best.d)} m</span></small>${v.rating ? html`<small class="pw-stars">★ ${v.rating.toFixed(1)}</small>` : ''}</div></div>
+      <div class="pw-biz-acts"><button class="pw-btn sm" data-hud="visit" data-arg='${JSON.stringify(best.p.id)}'>Visit</button><button class="pw-btn sm ghost" data-hud="open" data-arg='${JSON.stringify({ type: 'place', id: best.p.id })}'>${v.commerce ? 'Order' : 'Open'}</button><button class="pw-btn sm ghost" data-hud="ask" data-arg='${JSON.stringify(best.p.name)}'>More</button></div>`.s);
   }
 
   _plate(id, cls, htmlStr) {

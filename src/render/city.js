@@ -593,6 +593,45 @@ export class City {
     }).catch(() => {});
   }
 
+  // A real front door: dark metal frame, lit lobby behind double glass
+  // doors, handles, a lit header and a doormat, so the way in reads from
+  // the street (the interior's door is at the same spot).
+  _entrance(z, accent, width = 2.6, height = 3.2) {
+    const g = new THREE.Group();
+    const frameMat = this.mats.dark;
+    const glow = new THREE.MeshStandardMaterial({ color: '#3a3128', emissive: '#ffd9a0', emissiveIntensity: 0.35, roughness: 0.9 });
+    this.nightMats.push({ mat: glow, day: 0.35, night: 0.8 });
+    const lobby = new THREE.Mesh(plane, glow);
+    lobby.scale.set(width, height, 1);
+    lobby.position.set(0, height / 2, z + 0.02);
+    const glassMat = new THREE.MeshPhysicalMaterial({ color: '#9fc3d6', transparent: true, opacity: 0.32, roughness: 0.03, envMapIntensity: 2, depthWrite: false });
+    for (const sx of [-1, 1]) {
+      const leaf = new THREE.Mesh(plane, glassMat);
+      leaf.scale.set(width / 2 - 0.12, height - 0.2, 1);
+      leaf.position.set(sx * (width / 4), (height - 0.2) / 2 + 0.05, z + 0.08);
+      const handle = new THREE.Mesh(box, this.mats.metal);
+      handle.scale.set(0.05, 0.9, 0.08);
+      handle.position.set(sx * 0.16, 1.1, z + 0.14);
+      g.add(leaf, handle);
+    }
+    for (const [sx, sw, sy, sh] of [[-1, 0.18, height / 2, height], [1, 0.18, height / 2, height], [0, width + 0.36, height + 0.09, 0.18], [0, 0.08, height / 2, height]]) {
+      const f = new THREE.Mesh(box, frameMat);
+      f.scale.set(sw, sh, 0.2);
+      f.position.set(sx * (width / 2 + 0.09), sy, z + 0.08);
+      g.add(f);
+    }
+    const headMat = new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.5 });
+    this.nightMats.push({ mat: headMat, day: 0.45, night: 0.9 });
+    const head = new THREE.Mesh(box, headMat);
+    head.scale.set(width + 0.36, 0.22, 0.24);
+    head.position.set(0, height + 0.3, z + 0.1);
+    const mat = new THREE.Mesh(box, new THREE.MeshStandardMaterial({ color: '#20242a', roughness: 1 }));
+    mat.scale.set(width, 0.03, 1.2);
+    mat.position.set(0, 0.03, z + 0.7);
+    g.add(lobby, head, mat);
+    return g;
+  }
+
   _tower(p, seed) {
     const g = new THREE.Group();
     const { w, d, h, color, accent } = p;
@@ -617,7 +656,7 @@ export class City {
     sign.position.set(0, 6.6, d / 2 + 0.06);
     const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.15, 5, 6), this.mats.metal);
     antenna.position.set(-w * 0.25, h + 3, 0);
-    g.add(body, lobby, canopy, crown, sign, antenna, this._roofCap(w, d, h, color));
+    g.add(body, lobby, canopy, crown, sign, antenna, this._roofCap(w, d, h, color), this._entrance(d / 2 + 0.3, accent));
     return g;
   }
 
@@ -657,7 +696,7 @@ export class City {
       g.add(post);
       this._localObs.push([sx * w * 0.2, d / 2 + 3.1, 0.2]);
     }
-    g.add(body, curtain, band, sign, canopy, this._roofCap(w, d, h, color));
+    g.add(body, curtain, band, sign, canopy, this._roofCap(w, d, h, color), this._entrance(d / 2 + 0.22, accent, 3, 3.3));
     if (this.pbr && p.led) {
       const led = new LedScreen(w * 0.24, h * 0.55, p.led);
       led.mesh.position.set(-w * 0.37, h * 0.42, d / 2 + 0.35);

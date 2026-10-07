@@ -342,7 +342,7 @@ export class DemoPludorAdapter {
     const res = this._mutate((st) => {
       if (st.bookings.some((b) => b.slotId === slotId && b.businessId === businessId && b.serviceId === serviceId)) throw new PludorError('duplicate', 'You already booked that slot.');
       if (svc.price > 0) this._debit(st, svc.price, 'booking', `${p.businessName} · ${svc.name}`);
-      const booking = { id: rid('bk'), businessId, businessName: p.businessName, serviceId, serviceName: svc.name, price: svc.price, slotId, status: 'confirmed', ts: this.now() };
+      const booking = { id: rid('bk'), businessId, businessName: p.businessName, serviceId, serviceName: svc.name, price: svc.price, slotId, status: 'confirmed', ts: this.now(), stay: !!playerServices(p, this._time()).reservations };
       st.bookings.unshift(booking);
       st.reputation.ordersCompleted += 1;
       return { booking, progress: this._awardAndNotify('PLAYER_BOOKED', { businessId, serviceId }, st) };
@@ -541,7 +541,9 @@ export class DemoPludorAdapter {
           if (A.now() - last < 20000) throw new PludorError('cooldown', 'You just did that — try again in a moment.');
           if (activityId === 'sleep') {
             const home = Object.values(A._world().parcels).find((p) => p.tenantId === A.me.id && (p.template === 'home' || p.template === 'apartment'));
-            if (!home && ctx.placeId !== 'home') throw new PludorError('no_home', 'Rent a home or an apartment to sleep there.');
+            // A home, a rented apartment or a booked hotel stay gives you a bed.
+            const stay = st.bookings.some((b) => b.stay && b.status === 'confirmed');
+            if (!home && !stay) throw new PludorError('no_home', 'Rent an apartment, build a home or book a hotel stay to sleep.');
           }
           st.cooldowns[activityId] = A.now();
           st.needs = applyNeedEffects(st.needs, act.effects, A.now(), A.eco.needs, A.eco.time);
@@ -809,7 +811,7 @@ export class DemoPludorAdapter {
         const res = A._mutate((st) => {
           if (st.bookings.some((b) => b.slotId === slotId && b.businessId === businessId && b.serviceId === serviceId)) throw new PludorError('duplicate', 'You already booked that slot.');
           if (svc.price > 0) A._debit(st, svc.price, 'booking', `${biz.name} · ${svc.name}`);
-          const booking = { id: rid('bk'), businessId, businessName: biz.name, serviceId, serviceName: svc.name, price: svc.price, slotId, status: 'confirmed', ts: A.now() };
+          const booking = { id: rid('bk'), businessId, businessName: biz.name, serviceId, serviceName: svc.name, price: svc.price, slotId, status: 'confirmed', ts: A.now(), stay: biz.category === 'Hotel' };
           st.bookings.unshift(booking);
           st.reputation.ordersCompleted += 1;
           const progress = A._awardAndNotify('PLAYER_BOOKED', { businessId, serviceId }, st);
