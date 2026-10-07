@@ -20,6 +20,7 @@ import { EV } from '../core/events.js';
 import { Hud } from '../ui/hud.js';
 import { honk, chime } from '../render/audio.js';
 import { buildInterior, interiorKindFor, INTERIOR_Y, drawCinemaFrame } from '../render/interiors.js';
+import { adTexture } from '../render/textures.js';
 import { Sheets } from '../ui/sheets.js';
 
 const PROX = ECONOMY.proximity;
@@ -385,6 +386,7 @@ export class WorldApp {
       const dy = e.clientY - drag.y;
       if (Math.hypot(dx, dy) > 6) drag.moved = true;
       if (drag.moved) {
+        this._dragAt = performance.now();
         this.cam.yaw = drag.yaw - dx * 0.006;
         this.cam.pitch = Math.max(0.04, Math.min(1.3, drag.pitch + dy * 0.004));
       }
@@ -429,7 +431,7 @@ export class WorldApp {
     const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
     const avatars = [...this.peers.values(), ...this.bots.values()].map((p) => p.avatar).concat(this.agents.map((a) => a.avatar), [...(this.npcs?.values() || [])].map((n) => n.av).filter((a) => a.visible));
-    const hits = this.raycaster.intersectObjects([...this.city.pickables, ...avatars], true);
+    const hits = this.raycaster.intersectObjects(this.inside ? [...(this.inside.built.pickables || []), ...avatars.filter((a) => a.visible)] : [...this.city.pickables, ...avatars], true);
     for (const h of hits) {
       let o = h.object;
       while (o && !o.userData.ref && !o.userData.personRef) o = o.parent;
@@ -518,6 +520,7 @@ export class WorldApp {
     if (profile.avatar && profile.avatar !== this.player.userData.person) setPerson(this.player, profile.avatar);
     if (!this.studio && lookKey(profile.look) !== lookKey(this.player.userData.look)) applyLook(this.player, profile.look, { hi: true });
     for (const p of parcels) this.city.setParcelState(p.id, p.building, p.rentLabel);
+    this.city.setMarketStalls?.(parcels.filter((p) => p.venue === 'nova-market'));
     if (this.inside?.spec.units) this._refreshInterior();
     this._parkMyCars();
     this.hud.render();
@@ -708,6 +711,8 @@ export class WorldApp {
         return this.sheets.open('billboard', { id: ref.id });
       case 'player':
         return this.sheets.open('player', { id: ref.id });
+      case 'pbiz':
+        return this.sheets.open('pbiz', { parcelId: ref.id });
       case 'agent':
         return this.sheets.open('agent', { id: ref.id });
       case 'plaza':
@@ -918,7 +923,7 @@ export class WorldApp {
       const u = this.state.parcels.find((x) => x.id === id);
       const v = u && PLACES.find((p) => p.id === u.venue);
       if (!v) return null;
-      return { key: `apt:${id}`, type, id, kind: 'home', x: v.x, z: v.z, w: 20, d: 16, facing: v.facing, name: u.name.split(' · ')[0], accent: v.accent, parcelId: id, exitTo: { type: 'place', id: v.id } };
+      return { decor: (this.state.wallet?.owned || []).filter((x) => x.startsWith('decor-')), key: `apt:${id}`, type, id, kind: 'home', x: v.x, z: v.z, w: 20, d: 16, facing: v.facing, name: u.name.split(' · ')[0], accent: v.accent, parcelId: id, exitTo: { type: 'place', id: v.id } };
     }
     if (type === 'place') {
       const p = PLACES.find((x) => x.id === id);
@@ -933,7 +938,7 @@ export class WorldApp {
     if (!b) return null;
     const [fx, fz] = facingVector(p.facing);
     const label = b.businessName || (b.template === 'home' ? `${b.tenantName}'s Home` : `${b.tenantName}'s ${b.template === 'studio' ? 'Studio' : 'Shop'}`);
-    return { key: `parcel:${id}`, type, id, kind: b.template === 'home' ? 'home' : 'shop', x: p.x - fx * 2, z: p.z - fz * 2, w: p.w - 4, d: p.d - 8, facing: p.facing, name: label, accent: '#36d399', parcelId: id, owner: b.tenantName, parcel: p };
+    return { decor: b.template === 'home' && p.mine ? (this.state.wallet?.owned || []).filter((x) => x.startsWith('decor-')) : [], key: `parcel:${id}`, type, id, kind: b.template === 'home' ? 'home' : 'shop', x: p.x - fx * 2, z: p.z - fz * 2, w: p.w - 4, d: p.d - 8, facing: p.facing, name: label, accent: '#36d399', parcelId: id, owner: b.tenantName, parcel: p };
   }
 
   // Walk to a building's door and go in (or go straight in if already there).
@@ -1036,6 +1041,18 @@ export class WorldApp {
       g.add(av);
       return av;
     });
+    // Indoor ad frames are Ads placements like the billboards outside.
+    for (const f of built.adFrames || []) {
+      const w = toW(f.lx, f.lz);
+      const slot = { id: f.id, placementId: f.placementId, x: w.x, z: w.z, y: 0, w: f.w, h: f.h, pole: 0, wall: true, indoor: true };
+      if (!this.city.adSlots.some((s) => s.id === f.id)) this.city.adSlots.push(slot);
+      this.api.ads.getCreative(f.placementId).then((c) => {
+        if (!c) return;
+        f.mesh.material.map = adTexture(c);
+        f.mesh.material.color.set('#ffffff');
+        f.mesh.material.needsUpdate = true;
+      }).catch(() => {});
+    }
     const entry = { key: spec.key, spec, built, colliders, walls, obstacles, grid, staff, sig };
     this.interiors.set(spec.key, entry);
     return entry;
@@ -1189,7 +1206,8 @@ export class WorldApp {
 
   _interiorFrame(t) {
     const b = this.inside.built;
-    for (const fn of b.tickers) fn(t);
+    const hf = this.worldTime().hoursF;
+    for (const fn of b.tickers) fn(t, hf);
     if (b.reelScreen && (!this._lastInnerReel || t - this._lastInnerReel > 0.1)) {
       this._lastInnerReel = t;
       drawCinemaFrame(b.reelScreen, t, this._reel);
@@ -1256,7 +1274,85 @@ export class WorldApp {
     return { ix, iz, run: this.keys.has('shift') };
   }
 
+  // Arcade car handling: throttle/brake/reverse, speed-scaled steering,
+  // handbrake, collisions that stop you (not ghosting), off-road drag, and
+  // a chase camera. Wheels stay on the ground: the world is flat at floorY.
+  _driveCar(dt, t) {
+    const d = this.driving;
+    const pos = this.player.position;
+    const { ix, iz, run } = this._input();
+    const max = d.item.speed * (run ? 1.15 : 1);
+    const onRoad = DISTRICT.roads.some((r) => Math.abs(pos.x - r) < 5.5 || Math.abs(pos.z - r) < 5.5);
+    const cap = onRoad ? max : max * 0.4;
+    const brakeKey = this.keys.has(' ');
+    let v = d.v || 0;
+    if (iz > 0) v += (v < 0 ? 14 : max * 0.55) * dt * iz; // throttle (or brake from reverse)
+    else if (iz < 0) v += (v > 0 ? -14 : -3) * dt * -iz; // brake, then reverse
+    else v -= Math.sign(v) * Math.min(Math.abs(v), 3 * dt); // rolling resistance
+    if (brakeKey) v -= Math.sign(v) * Math.min(Math.abs(v), 22 * dt);
+    if (v > cap) v = Math.max(cap, v - 10 * dt);
+    v = Math.max(-5, v);
+    // Steering: tighter at low speed, never on the spot.
+    const steer = -ix * (d.isCar ? 1.9 : 2.6) * Math.min(1, Math.abs(v) / 4) * Math.sign(v || 1) * (brakeKey ? 1.4 : 1);
+    this.player.rotation.y += steer * dt;
+    const fx = Math.sin(this.player.rotation.y);
+    const fz = Math.cos(this.player.rotation.y);
+    const nx = pos.x + fx * v * dt;
+    const nz = pos.z + fz * v * dt;
+    const R = d.isCar ? 1.25 : 0.5;
+    let res = this._collideR(nx, nz, pos.x, pos.z, R);
+    res = this.obstacles.resolve(res.x, res.z, R);
+    const blockedBy = this.crowd.find((p) => p.ref !== this.player && Math.hypot(p.x - res.x, p.z - res.z) < R + 0.35);
+    const moved = Math.hypot(res.x - pos.x, res.z - pos.z);
+    const want = Math.abs(v * dt);
+    if (blockedBy || (want > 0.02 && moved < want * 0.5)) {
+      // Hit something: stop and bounce back a touch, no driving through.
+      if (Math.abs(v) > 4 && (!d.bumpAt || t - d.bumpAt > 1)) {
+        d.bumpAt = t;
+        this.hud.toast(blockedBy ? 'Watch out — someone’s in the way!' : 'Bump!', '💥', 900);
+      }
+      v = -v * 0.2;
+      if (!blockedBy) {
+        pos.x = res.x;
+        pos.z = res.z;
+      }
+    } else {
+      pos.x = res.x;
+      pos.z = res.z;
+    }
+    d.v = v;
+    this.speed = Math.abs(v);
+    pos.y = this.floorY;
+    // Chase camera swings in behind the car while driving.
+    if (Math.abs(v) > 1 && (!this._dragAt || performance.now() - this._dragAt > 1500)) {
+      let diff = this.player.rotation.y - Math.PI - this.cam.yaw;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      this.cam.yaw += diff * Math.min(1, dt * 2.5);
+      this.cam.pitch += (0.28 - this.cam.pitch) * Math.min(1, dt * 2);
+    }
+    if (this.keys.has('h') && (!d.hornAt || t - d.hornAt > 0.6)) {
+      d.hornAt = t;
+      honk(0.8, 0, false);
+    }
+    this.hud.setSpeed?.(Math.abs(v));
+    animateAvatar(this.player, t, 0, null);
+    const zone = zoneAt(pos.x, pos.z);
+    if (zone && zone.id !== this.zoneId) {
+      this.zoneId = zone.id;
+      this.hud.setZone(zone.name);
+    }
+  }
+
+  _collideR(nx, nz, ox, oz, r) {
+    const saved = this._collideRadius;
+    this._collideRadius = r;
+    const out = this._collide(nx, nz, ox, oz);
+    this._collideRadius = saved;
+    return out;
+  }
+
   _movePlayer(dt, t) {
+    if (this.driving && !this.inside) return this._driveCar(dt, t);
     const pos = this.player.position;
     const { ix, iz, run } = this.studio ? { ix: 0, iz: 0, run: false } : this._input();
     let dx = 0;
@@ -1329,7 +1425,7 @@ export class WorldApp {
 
   _collide(nx, nz, ox, oz) {
     if (this.inside) return this._collideBoxes(nx, nz, ox, oz, this.inside.colliders, 0.4);
-    const r = 0.55;
+    const r = this._collideRadius || 0.55;
     const lim = DISTRICT.half + 5;
     nx = Math.max(-lim, Math.min(lim, nx));
     nz = Math.max(-lim, Math.min(116, nz));
@@ -1536,7 +1632,7 @@ export class WorldApp {
         return ahead - halfLen;
       };
       if (!this.inside) {
-        playerGap = check(pp.x, pp.z, 2.6, 1.7);
+        playerGap = this.driving?.isCar ? check(pp.x, pp.z, 4.8, 2.3) : check(pp.x, pp.z, 2.6, 1.7);
         gap = playerGap;
       }
       for (const p of this.crowd) if (p.ref !== this.player) gap = Math.min(gap, check(p.x, p.z, 2.6, 1.6));
@@ -1635,6 +1731,7 @@ export class WorldApp {
         const e = entrancePoint(p);
         this._grid.upsert(`place:${p.id}`, e.x, e.z, { ref: { type: 'place', id: p.id }, label: p.name, r: PROX.interactRadius });
       }
+      for (const p of PARCELS.filter((x) => x.outdoor)) this._grid.upsert(`parcel:${p.id}`, p.x, p.z, { ref: { type: 'parcel', id: p.id }, label: p.name, r: 3.2 });
       for (const p of PARCELS.filter((x) => !x.venue)) this._grid.upsert(`parcel:${p.id}`, p.x, p.z - p.d / 2 - 1, { ref: { type: 'parcel', id: p.id }, label: p.name, r: 8 });
       if (this.flags.WORLD_ADS_ENABLED) for (const b of this.city.adSlots.filter((x) => !x.y)) this._grid.upsert(`bb:${b.id}`, b.x, b.z, { ref: { type: 'billboard', id: b.id }, label: 'Billboard', r: 9 });
       for (const a of AGENTS) this._grid.upsert(`agent:${a.id}`, a.x, a.z, { ref: { type: 'agent', id: a.id }, label: `${a.name} · ${a.role}`, r: 4.5 });
@@ -1740,12 +1837,13 @@ export class WorldApp {
     if (this.inside) {
       // Indoors: steady, warm artificial light whatever the time of day.
       this.env?.update(t.hoursF, d, dt);
-      this.hemi.intensity = 0.55;
+      this.scene.environmentIntensity = 0.45;
+      this.hemi.intensity = 0.5;
       this.hemi.color.set('#fff3e3');
-      this.sun.intensity = 0.4;
+      this.sun.intensity = 0.3;
       this._sunDir = new THREE.Vector3(20, 90, 30);
-      this.renderer.toneMappingExposure = this.env ? 0.62 : 0.9;
-      this.post.setNight(0.25);
+      this.renderer.toneMappingExposure = this.env ? 0.6 : 0.85;
+      this.post.setIndoor();
       if (this.inside.built.streetMat) this.inside.built.streetMat.color.set(d > 0.3 ? '#d7ebf7' : '#1b2740');
       return;
     }
@@ -1784,6 +1882,7 @@ export class WorldApp {
     const pp = this.player.position;
     const now = Date.now();
     for (const b of this.city.adSlots) {
+      if (b.indoor) continue;
       // Only screens near the player are fetched, and only when their
       // creative is due to rotate, to keep Ads traffic proportional.
       const dist = Math.hypot(pp.x - b.x, pp.z - b.z);

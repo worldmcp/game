@@ -137,6 +137,14 @@ export class PostFX {
     this.bloom.threshold = 0.92 - night * 0.12;
   }
 
+  // Interiors: bright walls under bloom read as haze, so only true
+  // light sources (screens, neon) may glow.
+  setIndoor() {
+    if (!this.enabled) return;
+    this.bloom.strength = 0.12;
+    this.bloom.threshold = 1.05;
+  }
+
   render(scene, camera) {
     if (this.enabled) this.composer.render();
     else this.renderer.render(scene, camera);

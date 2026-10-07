@@ -260,3 +260,19 @@ test('hotel booth: accommodation business is branded and takes paid bookings', a
   const unit = (await guest.land.listParcels()).find((p) => p.id === 'u-hb-2');
   assert.equal(unit.building.brand.color, '#0ea5e9');
 });
+
+test('players can book a World ad placement in-game', async () => {
+  const { adapter } = harness();
+  const info = await adapter.ads.placementInfo('world.central.wall-m2m20');
+  assert.equal(info.pricePerDay, 10);
+  assert.equal(info.booking, null);
+  const before = (await adapter.wallet.getWallet()).balance;
+  const ad = await adapter.ads.bookPlacement({ placementId: 'world.central.wall-m2m20', days: 3, creative: { headline: 'Grand opening', sub: 'Lagoon Stays', bg: ['#111111', '#222222'] } });
+  assert.equal(ad.headline, 'GRAND OPENING');
+  assert.equal((await adapter.wallet.getWallet()).balance, before - 30);
+  const c = await adapter.ads.getCreative('world.central.wall-m2m20');
+  assert.equal(c.id, ad.id, 'booked ad replaces rotation on that board');
+  const other = await adapter.ads.getCreative('world.central.plaza-ne');
+  assert.notEqual(other.id, ad.id);
+  await assert.rejects(adapter.ads.bookPlacement({ placementId: 'world.central.wall-m2m20', days: 0, creative: { headline: 'x' } }), /1–30/);
+});

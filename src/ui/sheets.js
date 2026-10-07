@@ -967,16 +967,35 @@ VIEWS['post-gig'] = {
 
 // BILLBOARD (World ad placement) ────────────────────────────
 VIEWS.billboard = {
-  title: 'Sponsored',
+  title: 'Ad space',
   async render(app, props) {
     const b = app.city.adSlots.find((x) => x.id === props.id) || BILLBOARDS.find((x) => x.id === props.id);
-    const c = await app.api.ads.getCreative(b.placementId);
+    const [c, info] = await Promise.all([app.api.ads.getCreative(b.placementId), app.api.ads.placementInfo(b.placementId)]);
     props._c = c;
-    const stats = await app.api.ads.getStats(c.id);
-    return html`<div class="pw-ad" style="--g1:${c.bg[0]};--g2:${c.bg[1]}"><small>Sponsored · ${c.advertiserName}</small><b>${c.headline}</b><span>${c.sub}</span></div>
-      ${btn(`${c.cta} →`, 'cta', null)}
-      <div class="pw-kv"><div><span>Placement</span><b>${b.placementId}</b></div><div><span>World reach</span><b>${stats.impressions} views · ${stats.interactions} taps</b></div></div>
-      <div class="pw-note">📣 This screen is inventory in Pludor Ads Manager. ${html`<button class="pw-link-btn" ${A('link', { key: 'ads.newWorldCampaign' })}>Advertise here</button>`}</div>`;
+    props._b = b;
+    const stats = c ? await app.api.ads.getStats(c.id) : { impressions: 0, interactions: 0 };
+    const kind = /\.wall-/.test(b.placementId) ? 'Wall screen' : /\.roof-/.test(b.placementId) ? 'Rooftop billboard' : /\.banner-/.test(b.placementId) ? 'Building banner' : /\.street-/.test(b.placementId) ? 'Street panel' : /indoor/.test(b.placementId) ? 'Indoor wall frame' : 'Billboard';
+    const d = props.days || 7;
+    props.draft ||= { headline: '', sub: '', cta: 'Visit us', palette: 0, target: '' };
+    const dr = props.draft;
+    const pal = AD_PALETTES[dr.palette] || AD_PALETTES[0];
+    const mine = props._mine ||= await app.api.business.mine().catch(() => []);
+    const taken = info.booking && !info.booking.mine;
+    return html`${c ? html`<div class="pw-ad" style="--g1:${c.bg[0]};--g2:${c.bg[1]}"><small>Sponsored · ${c.advertiserName}</small><b>${c.headline}</b><span>${c.sub}</span></div>${btn(`${c.cta} →`, 'cta', null)}` : ''}
+      <div class="pw-kv"><div><span>${kind}</span><b>${info.symbol}${info.pricePerDay}/day</b></div><div><span>Reach</span><b>${stats.impressions} views · ${stats.interactions} taps</b></div></div>
+      ${taken ? html`<div class="pw-note">🔒 Booked by ${info.booking.advertiserName} until ${new Date(info.booking.until).toLocaleDateString()}. Try another board nearby.</div>` : html`
+      <h4>${info.booking?.mine ? 'Extend or change your ad' : 'Advertise here'}</h4>
+      <div class="pw-ad" style="--g1:${pal[0]};--g2:${pal[1]}"><small>Sponsored · ${app.state.profile?.displayName || 'You'}</small><b>${(dr.headline || 'YOUR HEADLINE').toUpperCase()}</b><span>${dr.sub || 'Your message to the whole city'}</span></div>
+      <form class="pw-form" data-form="book">
+        <input name="headline" required minlength="2" maxlength="28" placeholder="Headline (e.g. GRAND OPENING)" value="${dr.headline}" data-change="draft">
+        <input name="sub" maxlength="48" placeholder="Sub-line (what, where, offer)" value="${dr.sub}" data-change="draft">
+        <div class="pw-grid2"><input name="cta" maxlength="20" placeholder="Button (e.g. Order now)" value="${dr.cta}" data-change="draft">
+        <select class="pw-select" name="target" data-change="draft"><option value="">Tap opens: my profile</option>${mine.map((m) => html`<option value="pbiz:${m.parcelId}" ${dr.target === `pbiz:${m.parcelId}` ? raw('selected') : ''}>Tap opens: ${m.name}</option>`)}</select></div>
+        <div class="pw-swatches">${AD_PALETTES.map((p, i) => html`<button type="button" class="pw-swatch ${dr.palette === i ? 'on' : ''}" style="--c:${p[0]};background:linear-gradient(135deg,${p[0]},${p[1]})" ${A('palette', i)}></button>`)}</div>
+        <label class="pw-mini">Days <b>${d}</b><input type="range" min="1" max="30" value="${d}" data-change="days"></label>
+        <button class="pw-btn">Book ${d} day${d > 1 ? 's' : ''} · ${info.symbol}${(info.pricePerDay * d).toFixed(2)}</button>
+      </form>`}
+      <div class="pw-note">📣 Every board is a Pludor Ads placement (${b.placementId}). ${html`<button class="pw-link-btn" ${A('link', { key: 'ads.newWorldCampaign' })}>Full Ads Manager</button>`}</div>`;
   },
   actions: {
     async cta(app, props, a, s) {
@@ -990,8 +1009,37 @@ VIEWS.billboard = {
         if (top) top.props.attribution = { source: 'world-ad', id: c.id };
       } else app.openRef(t);
     },
+    palette(app, props, i, s) {
+      props.draft.palette = i;
+      s.render(true);
+    },
+  },
+  changes: {
+    days(app, props, v, s) {
+      props.days = Number(v);
+      s.render(true);
+    },
+    draft(app, props, v, s, el) {
+      props.draft[el.name] = v;
+      s.render(true);
+    },
+  },
+  forms: {
+    async book(app, props, data, s) {
+      const b = props._b;
+      const d = props.days || 7;
+      const pal = AD_PALETTES[props.draft.palette] || AD_PALETTES[0];
+      const [tt, tid] = String(data.target || '').split(':');
+      if (!(await app.hud.confirm(`Book this ${d}-day placement?`, `Paid from your Pludor Wallet. Your ad shows on this board for everyone in the World.`, 'Book'))) return;
+      const ad = await app.api.ads.bookPlacement({ placementId: b.placementId, days: d, creative: { headline: data.headline, sub: data.sub, cta: data.cta, bg: pal, target: tt ? { type: tt, id: tid } : { type: 'player', id: app.state.profile.id } } });
+      app.city.setBillboardCreative(b.id, ad);
+      app.hud.toast('Your ad is live on this board', '📣');
+      await app.refreshLight();
+      s.render(true);
+    },
   },
 };
+const AD_PALETTES = [['#7c5cff', '#22d3ee'], ['#ff7a18', '#af002d'], ['#11998e', '#38ef7d'], ['#f12711', '#f5af19'], ['#1d3557', '#e63946'], ['#ff2bd6', '#2d0b59'], ['#0f2027', '#4cc9f0']];
 
 VIEWS.reel = {
   title: 'Flika',
@@ -1735,6 +1783,53 @@ VIEWS.avatar = {
     build(app, props, v, s) {
       props.draft.look.build = Number(v);
       app.previewLook(props.draft);
+      s.render(true);
+    },
+  },
+};
+
+// PLUDOR RADIO ─────────────────────────────────────────────
+VIEWS.radio = {
+  title: 'Pludor Radio',
+  async render(app, props) {
+    const r = app.hud.radio;
+    await r.load();
+    const days = props.days || 7;
+    const price = (r.pricePerDay || ECONOMY.radio.pricePerDay) * days;
+    return html`<p class="pw-muted">Live mixes from city artists. Promoted tracks play in rotation for everyone in the World.</p>
+      <div class="pw-list">${r.queue.slice(0, 12).map((t, i) => html`<button class="pw-card pw-row-card ${i === r.i ? 'on' : ''}" ${A('playAt', i)}><span class="pw-ico">${i === r.i && r.engine.playing ? '🔊' : t.promoted ? '📣' : t.local ? '🎧' : '🎵'}</span><div class="pw-grow"><b>${t.title}</b><small>${t.artist}${t.promoted ? ' · Promoted' : ''}</small></div></button>`)}</div>
+      <h4>Promote your music</h4>
+      <form class="pw-form" data-form="promote">
+        <div class="pw-grid2"><input name="title" required minlength="2" maxlength="40" placeholder="Track title"><input name="artist" maxlength="30" placeholder="Artist name" value="${app.state.profile?.displayName || ''}"></div>
+        <div class="pw-grid2"><select class="pw-select" name="genre">${Object.entries({ afrobeats: 'Afrobeats', amapiano: 'Amapiano', lofi: 'Lo-fi', house: 'House', highlife: 'Highlife' }).map(([k, v]) => html`<option value="${k}">${v}</option>`)}</select>
+        <label class="pw-mini">Days <b>${days}</b><input type="range" min="1" max="30" value="${days}" data-change="days"></label></div>
+        <label class="pw-mini">Your audio or video file (optional)<input name="file" type="file" accept="audio/*,video/*"></label>
+        <button class="pw-btn">Promote · ${sym()}${price.toFixed(2)}</button>
+      </form>
+      <p class="pw-muted">${sym()}${r.pricePerDay || ECONOMY.radio.pricePerDay}/day from your Pludor Wallet. In Pludor your upload is published through Pludor Media; in this demo it plays on your device, and the station plays a live mix in your genre for everyone else.</p>`;
+  },
+  actions: {
+    playAt(app, props, i, s) {
+      app.hud.radio.playIndex(i);
+      s.render(true);
+    },
+  },
+  changes: {
+    days(app, props, v, s) {
+      props.days = Number(v);
+      s.render(true);
+    },
+  },
+  forms: {
+    async promote(app, props, data, s, f) {
+      const days = props.days || 7;
+      const file = f.querySelector('input[type=file]')?.files?.[0];
+      if (!(await app.hud.confirm(`Promote “${data.title}”?`, `${days} day${days > 1 ? 's' : ''} on Pludor Radio · ${sym()}${((app.hud.radio.pricePerDay || 2) * days).toFixed(2)} from your wallet.`, 'Promote'))) return;
+      const promo = await app.api.radio.promote({ title: data.title, artist: data.artist, genre: data.genre, days });
+      if (file) app.hud.radio.playLocal(file, { title: promo.title, artist: promo.artist, genre: promo.genre });
+      await app.hud.radio.load();
+      app.hud.toast(`“${promo.title}” is in rotation for ${days} day${days > 1 ? 's' : ''}`, '📣');
+      await app.refreshLight();
       s.render(true);
     },
   },

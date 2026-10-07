@@ -60,6 +60,18 @@ export const NPC_PERSONAS = [
   { id: 'npc-16', name: 'Lola', age: 24, job: 'Fashion model', vibe: 'playful, stylish', bio: 'Shops at Kicks & Co.', dating: true, lines: ['Those sneakers at Kicks & Co though…', 'Have you tried the Avatar Studio? Cute caps.'] },
 ];
 
+// Pludor Radio station rotation (generated live by the radio engine).
+export const RADIO_TRACKS = [
+  { id: 'rt-1', title: 'Lagoon Lights', artist: 'DJ Kwame', genre: 'afrobeats', seed: 'lagoon' },
+  { id: 'rt-2', title: 'Log Drum Sunday', artist: 'Ama Keys', genre: 'amapiano', seed: 'sunday' },
+  { id: 'rt-3', title: 'Rooftop Study', artist: 'nova.lofi', genre: 'lofi', seed: 'rooftop' },
+  { id: 'rt-4', title: 'Skybar 2AM', artist: 'Pulse Residents', genre: 'house', seed: 'skybar' },
+  { id: 'rt-5', title: 'Palm Wine Morning', artist: 'The Highlife Co.', genre: 'highlife', seed: 'palmwine' },
+  { id: 'rt-6', title: 'Market Day Bounce', artist: 'Tunde B', genre: 'afrobeats', seed: 'market' },
+  { id: 'rt-7', title: 'Quiet Courier', artist: 'nova.lofi', genre: 'lofi', seed: 'courier' },
+  { id: 'rt-8', title: 'Private School Piano', artist: 'Ama Keys', genre: 'amapiano', seed: 'piano' },
+];
+
 export const BOT_REPLIES = {
   u_maya: ['Hey! 👋 Are you new to Nova City?', 'If you need product photos, ping me — I do quick turnarounds.', 'The Creator Hub has a bunch of new gigs today.'],
   u_jay: ['Yo! I need short-form editors, got Video Editing L2?', 'The Academy video course is fast. Worth it.', "Send me your portfolio when you're ready."],

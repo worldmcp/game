@@ -237,7 +237,7 @@ export function buildInterior(spec) {
   add(box, base, W, 0.14, 0.04, 0, 0.27, -D / 2 + 0.02);
   add(box, M(spec.kind === 'cinema' || spec.kind === 'arcade' || spec.kind === 'ai' ? '#0d0b12' : '#fbfaf7', { rough: 0.95 }), W + T * 2, 0.2, D + T * 2, 0, H + 0.1, 0);
   // Ceiling light panels.
-  const lightMat = M('#ffffff', { emissive: spec.kind === 'arcade' || spec.kind === 'cinema' ? accent : '#fff4e0', ei: spec.kind === 'arcade' || spec.kind === 'cinema' ? 1.2 : 2 });
+  const lightMat = M('#ffffff', { emissive: spec.kind === 'arcade' || spec.kind === 'cinema' ? accent : '#fff4e0', ei: spec.kind === 'arcade' || spec.kind === 'cinema' ? 1 : 1.2 });
   for (let x = -W / 2 + 3; x <= W / 2 - 2.9; x += Math.max(4, W / 4))
     for (let z = -D / 2 + 3; z <= D / 2 - 2.9; z += Math.max(4, D / 3)) add(box, lightMat, 1.6, 0.05, 0.6, x, H - 0.03, z);
   // Door: frame, glowing street view outside and an EXIT sign.
@@ -962,33 +962,63 @@ export function buildInterior(spec) {
       break;
     }
     case 'home': {
-      rug(-W * 0.15, 0.5, 4, 3, '#b8a58c');
-      sofa(-W * 0.15, 1.8, 2.6, Math.PI, '#6d7f8f');
+      // Furnishing comes from what the player owns (Pludor Store decor);
+      // a new home starts with the basics.
+      const has = (id) => (spec.decor || []).includes(id);
+      if (has('decor-rug')) rug(-W * 0.15, 0.5, 4.4, 3.2, '#7b2d26');
+      else rug(-W * 0.15, 0.5, 3, 2, '#b8a58c');
+      if (has('decor-sofa')) {
+        sofa(-W * 0.15, 1.8, 2.8, Math.PI, '#6d4c8f');
+        product('pouf', 0.55, -W * 0.15 + 1.9, 0.2, 0.9);
+      } else {
+        add(box, M('#8a8f99', { rough: 0.9 }), 1.4, 0.4, 0.8, -W * 0.15, 0.4, 1.8); // floor cushion
+        solid(-W * 0.15, 1.8, 0.7, 0.4);
+      }
       table(-W * 0.15, 0.4, 0.5, '#5d4a3a');
-      const tv = screenTexture();
-      out.reelScreen = tv;
-      screen(2.2, 1.24, -W * 0.15, 1.7, -1.4, 0, tv);
+      if (has('decor-tv')) {
+        const tv = screenTexture();
+        out.reelScreen = tv;
+        screen(2.6, 1.46, -W * 0.15, 1.8, -1.4, 0, tv);
+      }
       add(box, M('#2b2f36', { rough: 0.5 }), 2.4, 0.5, 0.45, -W * 0.15, 0.45, -1.55);
       solid(-W * 0.15, -1.55, 1.2, 0.25);
-      // Bed.
-      add(box, M('#e9e4da', { rough: 0.9 }), 2, 0.45, 2.3, -W / 2 + 1.4, 0.45, zBack + 1.5);
-      add(box, M('#5b7a99', { rough: 0.9 }), 2.02, 0.12, 1.4, -W / 2 + 1.4, 0.72, zBack + 1.9);
-      add(box, M('#ffffff', { rough: 0.9 }), 1.6, 0.14, 0.45, -W / 2 + 1.4, 0.76, zBack + 0.6);
-      add(box, M('#5d4a3a', { rough: 0.7 }), 2.2, 1.1, 0.12, -W / 2 + 1.4, 0.75, zBack + 0.32);
-      solid(-W / 2 + 1.4, zBack + 1.5, 1, 1.15);
-      spot(-W / 2 + 2.9, zBack + 1.6, 'Bed', 'Sleep to restore energy', [{ id: 'sleep', icon: '😴', label: 'Sleep', action: { type: 'activity', id: 'sleep' } }], 1.8);
+      // Bed: mattress for starters, a king bed with headboard when owned.
+      const king = has('decor-bed');
+      add(box, M('#e9e4da', { rough: 0.9 }), king ? 2.2 : 1.4, king ? 0.5 : 0.25, 2.3, -W / 2 + 1.5, king ? 0.47 : 0.33, zBack + 1.5);
+      add(box, M(king ? '#2f4f6e' : '#5b7a99', { rough: 0.9 }), king ? 2.22 : 1.42, 0.12, 1.4, -W / 2 + 1.5, king ? 0.75 : 0.5, zBack + 1.9);
+      add(box, M('#ffffff', { rough: 0.9 }), king ? 1.8 : 1.1, 0.14, 0.45, -W / 2 + 1.5, king ? 0.78 : 0.52, zBack + 0.6);
+      if (king) add(box, M('#5d4a3a', { rough: 0.7 }), 2.4, 1.3, 0.12, -W / 2 + 1.5, 0.85, zBack + 0.32);
+      solid(-W / 2 + 1.5, zBack + 1.5, king ? 1.1 : 0.7, 1.15);
+      spot(-W / 2 + 3, zBack + 1.6, 'Bed', 'Sleep to restore energy', [{ id: 'sleep', icon: '😴', label: 'Sleep', action: { type: 'activity', id: 'sleep' } }], 1.8);
       // Kitchen.
       counter(W / 2 - 2.2, zBack + 0.6, 3.6, 0.7, '#f2efe9', '#3a3f46');
       product('fridge', 1.9, W / 2 - 0.6, 0.2, zBack + 1.8);
       solid(W / 2 - 0.6, zBack + 1.8, 0.5, 0.5);
       product('bottle', 0.3, W / 2 - 2.8, 1.26, zBack + 0.6);
       spot(W / 2 - 2.2, zBack + 1.7, 'Kitchen', 'Grab a bite', [{ id: 'snack', icon: '🍳', label: 'Cook a snack', action: { type: 'activity', id: 'snack' } }, { id: 'order', icon: '🛵', label: 'Order delivery', action: { type: 'sheet', view: 'shops', props: {} } }]);
+      if (has('decor-dining')) {
+        table(W / 2 - 3, 1.5, 0.6, '#c9a26b');
+        for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) sit(W / 2 - 3 + Math.sin(a) * 0.9, 1.5 + Math.cos(a) * 0.9, a + Math.PI, '#5d4a3a');
+      }
       // Shower corner.
       add(box, new THREE.MeshPhysicalMaterial({ color: '#bfe3f2', transparent: true, opacity: 0.3, roughness: 0.05 }), 0.04, 2.2, 1.4, W / 2 - 1.5, 1.3, D / 2 - 2.2);
       add(box, M('#ffffff', { rough: 0.3 }), 1.4, 0.1, 1.4, W / 2 - 0.8, 0.25, D / 2 - 2.2);
       spot(W / 2 - 0.9, D / 2 - 2.2, 'Shower', 'Freshen up', [{ id: 'shower', icon: '🚿', label: 'Shower', action: { type: 'activity', id: 'shower' } }], 1.3);
-      spot(-W * 0.15, 2.9, 'Living room', 'Watch Flika, relax', [{ id: 'rest', icon: '🛋️', label: 'Relax', action: { type: 'activity', id: 'rest' } }, { id: 'play', icon: '🎮', label: 'Play games', action: { type: 'sheet', view: 'games', props: {} } }], 1.8);
-      plant(W / 2 - 0.8, 1, 1.2);
+      spot(-W * 0.15, 2.9, 'Living room', 'Relax, play, furnish', [{ id: 'rest', icon: '🛋️', label: 'Relax', action: { type: 'activity', id: 'rest' } }, { id: 'furnish', icon: '🪑', label: 'Furnish', action: { type: 'sheet', view: 'vstore', props: { kind: 'decor' } } }, { id: 'play', icon: '🎮', label: 'Games', action: { type: 'sheet', view: 'games', props: {} } }], 1.8);
+      if (has('decor-plants')) {
+        plant(W / 2 - 0.8, 1, 1.2);
+        plant(-W / 2 + 0.8, D / 2 - 1.2, 1.3);
+      }
+      if (has('decor-lamp')) {
+        add(cyl, M('#222', { metal: 0.6 }), 0.03, 1.6, 0.03, -W * 0.15 - 1.9, 1, 2.2);
+        add(sphere, M('#fff', { emissive: '#ffd9a0', ei: 2 }), 0.22, 0.22, 0.22, -W * 0.15 - 1.9, 1.85, 2.2);
+        post(-W * 0.15 - 1.9, 2.2, 0.25);
+      }
+      if (has('decor-bookshelf')) shelf(-W / 2 + 0.35, 1.5, 2.4, Math.PI / 2, [['vase', 0.3], ['lantern', 0.3], ['camera', 0.25], ['boombox', 0.3]]);
+      if (has('decor-art')) {
+        add(box, M('#b08d57', { metal: 0.4 }), 1.6, 1.1, 0.06, -W * 0.15, 3, zBack + 0.04);
+        add(plane, new THREE.MeshStandardMaterial({ map: paintingTexture(42), roughness: 0.8 }), 1.46, 0.96, 1, -W * 0.15, 3, zBack + 0.08);
+      }
       product('lantern', 0.5, -W / 2 + 0.5, 0.2, D / 2 - 1.5);
       break;
     }
@@ -1002,10 +1032,133 @@ export function buildInterior(spec) {
     }
   }
 
+  if (!['home'].includes(spec.kind)) amenities();
+
+  // Real-life amenities every public interior has, plus sellable wall space:
+  // an indoor ad frame (Ads placement) and paintings by local artists.
+  function amenities() {
+    const small = W < 18;
+    out.pickables = out.pickables || [];
+    out.adFrames = [];
+    // Restrooms on the right wall near the entrance.
+    if (!['nightclub'].includes(spec.kind) || D > 20) {
+      const rz = D / 2 - (small ? 2.6 : 3.2);
+      for (const [k, label] of [[0, '🚹'], [1, '🚺']]) {
+        const z = rz - k * 1.5;
+        add(box, M('#5b6672', { rough: 0.5 }), 0.06, 2.3, 1.1, W / 2 - 0.04, 1.35, z);
+        const sgn = add(plane, new THREE.MeshBasicMaterial({ map: boardTexture(label, [], { bg: '#1d2430', accent: '#9bdcff', w: 256, h: 160 }), toneMapped: false }), 0.4, 0.25, 1, W / 2 - 0.08, 2.7, z, -Math.PI / 2);
+        sgn.receiveShadow = false;
+      }
+      spot(W / 2 - 1.2, rz - 0.75, 'Restrooms', 'Freshen up', [{ id: 'wash', icon: '🚻', label: 'Freshen up', action: { type: 'activity', id: 'shower' } }], 1.3);
+    }
+    // Pludor Pay terminal / cash point + bin by the door.
+    const ax = -W / 2 + 0.6;
+    const az = D / 2 - 1.5;
+    add(box, M('#1d2430', { metal: 0.5, rough: 0.3 }), 0.6, 1.6, 0.5, ax, 1, az);
+    add(plane, new THREE.MeshBasicMaterial({ map: boardTexture('PLUDOR PAY', [['Wallet', '24/7']], { bg: '#0b1220', accent: '#22d3ee', w: 256, h: 200 }), toneMapped: false }), 0.42, 0.33, 1, ax + 0.31, 1.45, az, Math.PI / 2);
+    solid(ax, az, 0.3, 0.25);
+    spot(ax + 1.1, az, 'Pludor Pay point', 'Wallet, top-ups, receipts', [{ id: 'wallet', icon: '💳', label: 'Wallet', action: { type: 'sheet', view: 'wallet', props: {} } }], 1.2);
+    add(cyl, M('#2f3a44', { rough: 0.6 }), 0.22, 0.7, 0.22, ax, 0.55, az - 0.9);
+    post(ax, az - 0.9, 0.25);
+    // Water cooler, extinguisher, wall clock, CCTV, AC vents, Wi-Fi sign.
+    const wx = W / 2 - 0.5;
+    const wz = D / 2 - 0.9;
+    add(box, M('#e9eef3', { rough: 0.4 }), 0.4, 1.0, 0.4, wx, 0.7, wz);
+    add(cyl, new THREE.MeshPhysicalMaterial({ color: '#8fd3ff', transparent: true, opacity: 0.6, roughness: 0.05 }), 0.15, 0.45, 0.15, wx, 1.45, wz);
+    post(wx, wz, 0.3);
+    add(cyl, M('#d62828', { rough: 0.4 }), 0.09, 0.55, 0.09, 1.75, 0.55, D / 2 - 0.15);
+    const clockTex = (() => {
+      const [c] = canvas(128, 128);
+      return tex(c);
+    })();
+    const clock = add(new THREE.CircleGeometry(0.3, 32), new THREE.MeshBasicMaterial({ map: clockTex }), 1, 1, 1, -1.9, Math.min(H - 0.7, 3.3), D / 2 - 0.02, Math.PI);
+    clock.receiveShadow = false;
+    out.tickers.push((time, hoursF) => {
+      if (hoursF === undefined || clock.userData.m === Math.floor(hoursF * 60)) return;
+      clock.userData.m = Math.floor(hoursF * 60);
+      const c = clockTex.image;
+      const gg = c.getContext('2d');
+      gg.fillStyle = '#fff';
+      gg.beginPath();
+      gg.arc(64, 64, 62, 0, Math.PI * 2);
+      gg.fill();
+      gg.strokeStyle = '#111';
+      gg.lineWidth = 5;
+      gg.stroke();
+      const hand = (a, len, w) => {
+        gg.lineWidth = w;
+        gg.beginPath();
+        gg.moveTo(64, 64);
+        gg.lineTo(64 + Math.sin(a) * len, 64 - Math.cos(a) * len);
+        gg.stroke();
+      };
+      hand(((hoursF % 12) / 12) * Math.PI * 2, 30, 6);
+      hand(((hoursF % 1)) * Math.PI * 2, 46, 3);
+      clockTex.needsUpdate = true;
+    });
+    for (const [x, z] of [[-W / 2 + 0.5, -D / 2 + 0.5], [W / 2 - 0.5, D / 2 - 0.5]]) add(sphere, M('#111', { metal: 0.6, rough: 0.2 }), 0.12, 0.12, 0.12, x, H - 0.15, z);
+    for (let x = -W / 2 + 2; x < W / 2 - 1; x += Math.max(5, W / 3)) add(box, M('#cfd5db', { metal: 0.4, rough: 0.5 }), 1.2, 0.03, 0.3, x, H - 0.02, 0);
+    add(plane, new THREE.MeshBasicMaterial({ map: boardTexture('FREE WI-FI', [['Pludor', '']], { bg: '#ffffff', accent: '#3b82f6', w: 256, h: 160 }), toneMapped: false }), 0.5, 0.31, 1, 2.6, 2.2, D / 2 - 0.02, Math.PI);
+    // Indoor ad frame on the left wall (sold through Pludor Ads).
+    if (!['foodcourt', 'salon', 'hotel'].includes(spec.kind)) {
+      const fz = D / 2 - (small ? 3.6 : 4.4);
+      add(box, M('#111', { metal: 0.6, rough: 0.3 }), 0.08, 1.5, 2.8, -W / 2 + 0.05, 2.3, fz);
+      const face = add(plane, new THREE.MeshBasicMaterial({ color: '#333', toneMapped: false }), 2.6, 1.3, 1, -W / 2 + 0.1, 2.3, fz, Math.PI / 2);
+      face.receiveShadow = false;
+      face.userData.ref = { type: 'billboard', id: `indoor-${spec.key}-0` };
+      out.adFrames.push({ mesh: face, id: `indoor-${spec.key}-0`, placementId: `world.indoor.${(spec.placeId || spec.key).replace(/[^a-z0-9-]/g, '-')}`, lx: -W / 2 + 0.1, lz: fz, w: 2.6, h: 1.3 });
+      out.pickables.push(face);
+    }
+    // Paintings by local artists in the back corners.
+    if (!['foodcourt', 'apartments', 'repair', 'barber'].includes(spec.kind) && W > 11) {
+      [-1, 1].forEach((side, k) => {
+        const px = side * (W / 2 - 2.1);
+        const art = paintingTexture((spec.key.length * 7 + k * 13) % 97);
+        add(box, M('#b08d57', { metal: 0.4, rough: 0.4 }), 1.5, 1.15, 0.06, px, 2.65, -D / 2 + 0.04);
+        const pm = add(plane, new THREE.MeshStandardMaterial({ map: art, roughness: 0.8 }), 1.36, 1.0, 1, px, 2.65, -D / 2 + 0.08);
+        pm.receiveShadow = false;
+        add(plane, new THREE.MeshBasicMaterial({ map: boardTexture(ARTISTS[(spec.key.length + k) % ARTISTS.length], [['Print · 90 pts', '']], { bg: '#f4efe6', fg: '#222', accent: '#b08d57', w: 256, h: 96 }) }), 0.4, 0.15, 1, px + 0.95, 2.2, -D / 2 + 0.06);
+      });
+      spot(-(W / 2 - 2.1), -D / 2 + 1.8, 'Local art', 'Paintings by city artists', [{ id: 'print', icon: '🖼️', label: 'Buy a print', action: { type: 'sheet', view: 'vstore', props: {} } }, { id: 'wall', icon: '📣', label: 'Rent wall space', action: { type: 'sheet', view: 'billboard', props: { id: `indoor-${spec.key}-0` } } }], 1.6);
+    }
+  }
+
   g.traverse((o) => {
     if (o.isMesh) o.castShadow = false;
   });
   return out;
+}
+
+const ARTISTS = ['Adaeze · Lagoon Dusk', 'Kofi · City Pulse', 'Mei · Neon Rain', 'Tunde · Market Day', 'Ines · Blue Hour', 'Zara · Rooftops'];
+
+// Abstract "oil" painting generated from a seed.
+function paintingTexture(seed) {
+  const [c, g] = canvas(256, 192);
+  let s = seed * 9301 + 49297;
+  const r = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
+  const hue = Math.floor(r() * 360);
+  const grd = g.createLinearGradient(0, 0, 256, 192);
+  grd.addColorStop(0, `hsl(${hue},55%,${30 + r() * 30}%)`);
+  grd.addColorStop(1, `hsl(${(hue + 60 + r() * 120) % 360},60%,${25 + r() * 30}%)`);
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 256, 192);
+  for (let i = 0; i < 26; i++) {
+    g.fillStyle = `hsla(${(hue + r() * 200) % 360},70%,${30 + r() * 50}%,${0.25 + r() * 0.5})`;
+    g.beginPath();
+    g.ellipse(r() * 256, r() * 192, 10 + r() * 60, 6 + r() * 30, r() * 3, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.strokeStyle = 'rgba(0,0,0,0.25)';
+  for (let i = 0; i < 40; i++) {
+    g.lineWidth = 1 + r() * 2;
+    g.beginPath();
+    const x = r() * 256;
+    const y = r() * 192;
+    g.moveTo(x, y);
+    g.quadraticCurveTo(x + r() * 40 - 20, y + r() * 40 - 20, x + r() * 60 - 30, y + r() * 60 - 30);
+    g.stroke();
+  }
+  return tex(c);
 }
 
 export { drawCinemaFrame };

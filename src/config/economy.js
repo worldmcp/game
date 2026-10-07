@@ -132,10 +132,14 @@ export const ECONOMY = {
       booth: { label: 'Business booth', icon: '🛎️', buildCost: 0, unit: true },
       desk: { label: 'Cowork desk', icon: '💻', buildCost: 0, unit: true },
       apartment: { label: 'Apartment', icon: '🏢', buildCost: 0, unit: true },
+      mstall: { label: 'Market stall', icon: '🧺', buildCost: 0, unit: true },
     },
   },
 
   transit: { worldRideFee: 0 },
+
+  // Pludor Radio: artists pay per day to have a track in rotation.
+  radio: { pricePerDay: 2 },
 
   // Age gate for nightlife (clubs, bars, 18+ ads) and dating. Countries can
   // raise it (e.g. 21); production reads verified age from Pludor identity.
@@ -158,8 +162,15 @@ export const ECONOMY = {
     { id: 'car-suv', name: 'Family SUV', icon: '🚐', kind: 'car', vehicle: 'car', points: 700, money: 30, speed: 14, color: '#3a5a40', desc: 'Room for everyone and their shopping.' },
     { id: 'car-gt', name: 'Nova GT', icon: '🏎️', kind: 'car', vehicle: 'car', points: 800, money: 40, speed: 20, color: '#e63946', desc: 'The fastest way to arrive in style.' },
     { id: 'car-aether', name: 'Aether X Hypercar', icon: '🚀', kind: 'car', vehicle: 'car', points: 2000, money: 120, speed: 24, color: '#c0c7d1', desc: 'Flagship. Chrome finish, turns every head in the city.' },
+    { id: 'decor-sofa', name: 'Velvet sofa set', icon: '🛋️', kind: 'decor', points: 150, money: 0, desc: 'Sofa and pouf for your living room.' },
+    { id: 'decor-tv', name: 'Smart TV', icon: '📺', kind: 'decor', points: 200, money: 2, desc: 'Watch Flika at home.' },
+    { id: 'decor-bed', name: 'King bed', icon: '🛏️', kind: 'decor', points: 180, money: 0, desc: 'Upgrade from the starter mattress.' },
+    { id: 'decor-dining', name: 'Dining set', icon: '🍽️', kind: 'decor', points: 140, money: 0, desc: 'Table for four — host dinner parties.' },
+    { id: 'decor-rug', name: 'Persian rug', icon: '🧶', kind: 'decor', points: 70, money: 0, desc: 'Warm, rich colours underfoot.' },
+    { id: 'decor-lamp', name: 'Floor lamp', icon: '💡', kind: 'decor', points: 50, money: 0, desc: 'Cosy evening light.' },
+    { id: 'decor-bookshelf', name: 'Bookshelf', icon: '📚', kind: 'decor', points: 90, money: 0, desc: 'Show off your books and treasures.' },
     { id: 'decor-plants', name: 'Home plant pack', icon: '🪴', kind: 'decor', points: 60, money: 0, desc: 'Greenery for your apartment or home.' },
-    { id: 'decor-art', name: 'Skyline art print', icon: '🖼️', kind: 'decor', points: 90, money: 1, desc: 'A framed print for your living room.' },
+    { id: 'decor-art', name: 'Skyline art print', icon: '🖼️', kind: 'decor', points: 90, money: 1, desc: 'A framed print by a city artist.' },
     { id: 'trim-neon', name: 'Neon storefront trim', icon: '✨', kind: 'building', points: 300, money: 5, desc: 'Glowing trim for your shop or stall sign.' },
   ],
 

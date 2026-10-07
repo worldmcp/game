@@ -73,3 +73,10 @@ export function chime(volume = 0.6) {
     o.stop(now + t0 + 1);
   });
 }
+
+// Shared context for other sound sources (Pludor Radio). Creates it on
+// demand, which browsers allow inside a click handler.
+export function audioContext() {
+  unlock();
+  return ctx;
+}

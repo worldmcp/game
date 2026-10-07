@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { html, esc, money, raw, PRESENCE_COLORS } from './dom.js';
 import { TIPS } from '../config/tips.js';
+import { Radio } from './radio.js';
 import { PLACES, PARCELS, AGENTS, WORLD, DISTRICT, PLAZA, footprint, entrancePoint, zoneAt } from '../config/nova-city.js';
 import { ECONOMY } from '../config/economy.js';
 import { formatClock } from '../core/world-time.js';
@@ -28,6 +29,7 @@ export class Hud {
     this._minimapBase();
     this._initStick();
     this._startTips();
+    this.radio = new Radio(this, app);
   }
 
   _skeleton() {
@@ -304,6 +306,7 @@ export class Hud {
       }
       case 'parcel': {
         const p = app.state.parcels.find((x) => x.id === f.ref.id);
+        if (p?.outdoor) return p.building?.businessName ? `${p.building.businessName} · by ${p.building.tenantName}` : p.status === 'available' ? `Market stall for rent · ${p.rentLabel}` : 'Market stall';
         return p ? (p.status === 'available' ? `For rent · ${p.rentLabel} · ${p.zoning}` : p.mine ? 'Your parcel' : `Rented by ${p.tenant?.displayName}`) : '';
       }
       case 'agent':
@@ -344,6 +347,14 @@ export class Hud {
         return acts;
       }
       case 'parcel': {
+        const pc = app.state.parcels.find((x) => x.id === id);
+        if (pc?.outdoor) {
+          const shop = pc.building?.businessName;
+          return [
+            ...(shop && !pc.mine ? [{ id: 'shop', icon: '🛍️', label: `Shop ${shop}`, run: () => sheets.open('pbiz', { parcelId: id }) }] : []),
+            { id: 'view', icon: pc.status === 'available' ? '🔑' : '🧺', label: pc.status === 'available' ? `Rent · ${pc.rentLabel}` : pc.mine ? 'Manage stall' : 'Stall info', run: () => sheets.open('parcel', { id }) },
+          ];
+        }
         const walkIn = !!app.interiorSpec('parcel', id);
         return [...(walkIn ? [{ id: 'enter', icon: '🚪', label: 'Go inside', run: () => app.enterBuilding('parcel', id) }] : []), { id: 'view', icon: '🏗️', label: 'View parcel', run: () => sheets.open('parcel', { id }) }];
       }
@@ -381,7 +392,17 @@ export class Hud {
     const el = this.q('.pw-drive');
     if (!el) return;
     el.hidden = !item;
-    if (item) el.querySelector('.pw-drive-txt').textContent = `${item.icon} ${item.name} · ${item.speed} m/s`;
+    this._driveItem = item;
+    if (item) this.setSpeed(0);
+  }
+
+  setSpeed(ms) {
+    const el = this.q('.pw-drive-txt');
+    if (!el || !this._driveItem) return;
+    const kmh = Math.round(ms * 3.6);
+    if (kmh === this._kmh) return;
+    this._kmh = kmh;
+    el.innerHTML = html`${this._driveItem.icon} ${this._driveItem.name} · <b class="pw-kmh">${kmh}</b> km/h <small>W/S · A/D · Space brake · H horn</small>`.s;
   }
 
   // ───────── guidance bubbles ─────────
@@ -718,6 +739,7 @@ export class Hud {
   }
 
   frame(t) {
+    this.radio?.frame(t);
     const now = performance.now();
     if (!this._mmT || now - this._mmT > 120) {
       this._mmT = now;

@@ -24,6 +24,17 @@ const money = (n) => Math.round(n * 100) / 100;
 const rid = (p) => `${p}_${Math.random().toString(36).slice(2, 10)}`;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const BOT_IDS = new Set(D.RESIDENTS.map((r) => r.id));
+// Daily price of a World ad placement, by where it is.
+export function placementPrice(id) {
+  if (/plaza/.test(id)) return 15;
+  if (/\.wall-/.test(id) || /wayfare-roof/.test(id)) return 10;
+  if (/\.roof-/.test(id) || /market-gate/.test(id)) return 8;
+  if (/\.banner-/.test(id)) return 6;
+  if (/\.street-/.test(id)) return 4;
+  if (/^world\.indoor\./.test(id)) return 3;
+  return 5;
+}
+
 // Services and stays a player business sells become bookable time slots.
 function playerServices(p, t) {
   if (!['service', 'accommodation'].includes(p.category)) return {};
@@ -49,6 +60,7 @@ const ZONING_TEMPLATES = {
   booth: ['booth'],
   desk: ['desk'],
   apartment: ['apartment'],
+  mstall: ['mstall'],
 };
 
 export function memoryStorage() {
@@ -175,9 +187,10 @@ export class DemoPludorAdapter {
   _world() {
     const w = this.store.get('pludor-demo:world') || { parcels: {}, postedGigs: [], claims: {}, feedback: {}, adStats: {}, reports: [] };
     // Demo residents trading in venue units (food court, booths) from day one.
-    if (!w.unitsSeeded) {
-      w.unitsSeeded = 1;
-      for (const [id, seed] of Object.entries(UNIT_SEEDS)) if (!w.parcels[id]) w.parcels[id] = { ...seed, catalog: seed.catalog.map((c) => ({ ...c })), rentedAt: 0 };
+    // Versioned so worlds saved before new venues still get their residents.
+    if ((w.unitsSeeded || 0) < 2) {
+      w.unitsSeeded = 2;
+      for (const [id, seed] of Object.entries(UNIT_SEEDS)) if (!w.parcels[id]) w.parcels[id] = { ...seed, catalog: seed.catalog.map((c) => ({ ...c })), brand: seed.brand ? { ...seed.brand } : undefined, rentedAt: 0 };
       this.store.set('pludor-demo:world', w);
     }
     return w;
@@ -1116,6 +1129,37 @@ export class DemoPludorAdapter {
       }),
     };
 
+    // Pludor Radio: station rotation + paid promotion slots for artists.
+    this.radio = {
+      playlist: T(() => {
+        const w = A._world();
+        const now = A.now();
+        const promos = (w.radioPromos || []).filter((p) => p.until > now).map((p) => ({ ...p, promoted: true }));
+        return { promoted: promos, station: D.RADIO_TRACKS, pricePerDay: A.eco.radio?.pricePerDay ?? 2, symbol: A.eco.currency.symbol };
+      }),
+      promote: T((spec = {}) => {
+        const title = String(spec.title || '').replace(/[<>]/g, '').trim().slice(0, 40);
+        const artist = String(spec.artist || A._load().profile.displayName).replace(/[<>]/g, '').trim().slice(0, 30);
+        const days = Math.floor(Number(spec.days));
+        const genre = ['afrobeats', 'amapiano', 'lofi', 'house', 'highlife'].includes(spec.genre) ? spec.genre : 'afrobeats';
+        if (title.length < 2) throw new PludorError('invalid', 'Give your track a title.');
+        if (!(days >= 1 && days <= 30)) throw new PludorError('invalid', 'Promote for 1–30 days.');
+        const fee = money(days * (A.eco.radio?.pricePerDay ?? 2));
+        const promo = { id: rid('rp'), title, artist, genre, seed: `${title}|${artist}`, by: A.me.id, days, fee, from: A.now(), until: A.now() + days * 86400000 };
+        A._mutate((st) => A._debit(st, fee, 'radio', `Radio promotion · ${title} · ${days} day${days > 1 ? 's' : ''}`));
+        A._mutateWorld((w) => {
+          (w.radioPromos ||= []).push(promo);
+          w.radioPromos = w.radioPromos.filter((p) => p.until > A.now()).slice(-60);
+          const t = (w.treasury ||= { total: 0, byType: {} });
+          t.total = money(t.total + fee);
+          t.byType.radio = money((t.byType.radio || 0) + fee);
+        });
+        A._analytics('radio_promotion', { days, fee });
+        A._notify({ kind: 'state' });
+        return promo;
+      }),
+    };
+
     // Pludor Store: virtual goods paid with Points, or Points + Wallet money.
     this.shop = {
       listVirtual: T(() => {
@@ -1271,6 +1315,9 @@ export class DemoPludorAdapter {
     this.ads = {
       getCreative: T((placementId) => {
         const adult = isAdult(A._load().profile, A.now(), A.eco.ageGate?.adult ?? 18);
+        // A placement someone booked in-world shows only their ad until it ends.
+        const booked = (A._world().bookedAds || []).find((b) => b.placements[0] === placementId && b.until > A.now() && (adult || !b.ageRestricted));
+        if (booked) return { ...booked, placementId, sponsored: true, rotatesInMs: 15000 };
         // Nightlife and other 18+ promotions are only served to adults.
         const eligible = D.CAMPAIGNS.filter((c) => (c.placements.includes('*') || c.placements.includes(placementId)) && (adult || !c.ageRestricted));
         if (!eligible.length) return null;
@@ -1298,7 +1345,7 @@ export class DemoPludorAdapter {
         return { counted: true };
       }),
       trackInteraction: T((placementId, campaignId, kind = 'click') => {
-        const c = D.CAMPAIGNS.find((x) => x.id === campaignId);
+        const c = D.CAMPAIGNS.find((x) => x.id === campaignId) || (A._world().bookedAds || []).find((x) => x.id === campaignId);
         if (!c) throw new PludorError('not_found', 'Unknown campaign.');
         A._mutateWorld((w) => {
           const s = (w.adStats[campaignId] ||= { impressions: 0, interactions: 0, uniques: [], visits: 0 });
@@ -1307,6 +1354,42 @@ export class DemoPludorAdapter {
         const progress = A._mutate((st) => A._awardAndNotify('PLAYER_INTERACTED_AD', { placementId, campaignId, kind }, st));
         A._flush();
         return { target: c.target, progress };
+      }),
+      // Self-serve booking of one World placement (billboard, wall screen,
+      // rooftop board, street panel, indoor frame). Production: Ads Manager.
+      placementInfo: T((placementId) => {
+        const b = (A._world().bookedAds || []).find((x) => x.placements[0] === placementId && x.until > A.now());
+        return { placementId, pricePerDay: placementPrice(placementId), booking: b ? { advertiserName: b.advertiserName, until: b.until, mine: b.advertiserId === A.me.id, headline: b.headline } : null, symbol: A.eco.currency.symbol };
+      }),
+      bookPlacement: T(({ placementId, days, creative = {} } = {}) => {
+        const pid = String(placementId || '');
+        if (!/^world\.[a-z0-9.-]{3,80}$/.test(pid)) throw new PludorError('invalid', 'Unknown placement.');
+        const d = Math.floor(Number(days));
+        if (!(d >= 1 && d <= 30)) throw new PludorError('invalid', 'Book 1–30 days.');
+        const clean = (v, n) => String(v || '').replace(/[<>]/g, '').trim().slice(0, n);
+        const headline = clean(creative.headline, 28).toUpperCase();
+        if (headline.length < 2) throw new PludorError('invalid', 'Write a headline.');
+        const hex = (v, dflt) => (/^#[0-9a-f]{6}$/i.test(String(v)) ? String(v) : dflt);
+        const t = creative.target || {};
+        const target = ['place', 'pbiz', 'player'].includes(t.type) ? { type: t.type, id: clean(t.id, 60) } : { type: 'player', id: A.me.id };
+        const w0 = A._world();
+        if ((w0.bookedAds || []).some((x) => x.placements[0] === pid && x.until > A.now() && x.advertiserId !== A.me.id)) throw new PludorError('taken', 'Someone has this placement booked — try another board or check back later.');
+        const price = money(placementPrice(pid) * d);
+        const profile = A._load().profile;
+        A._mutate((st) => A._debit(st, price, 'ads', `World ad · ${headline} · ${d} day${d > 1 ? 's' : ''}`));
+        const ad = {
+          id: rid('ad'), advertiserId: A.me.id, advertiserName: clean(creative.advertiserName, 30) || profile.displayName, headline, sub: clean(creative.sub, 48), cta: clean(creative.cta, 20) || 'Learn more',
+          bg: [hex(creative.bg?.[0], '#7c5cff'), hex(creative.bg?.[1], '#22d3ee')], target, placements: [pid], booked: true, from: A.now(), until: A.now() + d * 86400000, price,
+        };
+        A._mutateWorld((w) => {
+          w.bookedAds = (w.bookedAds || []).filter((x) => x.until > A.now() && !(x.placements[0] === pid && x.advertiserId === A.me.id));
+          w.bookedAds.push(ad);
+          const tr = (w.treasury ||= { total: 0, byType: {} });
+          tr.total = money(tr.total + price);
+          tr.byType.ads = money((tr.byType.ads || 0) + price);
+        });
+        A._analytics('ad_booked', { placementId: pid, days: d, price });
+        return ad;
       }),
       getStats: T((campaignId) => {
         const s = A._world().adStats[campaignId] || { impressions: 0, interactions: 0, uniques: [] };

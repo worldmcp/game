@@ -280,6 +280,8 @@ const UNIT_DEFS = [
   ...[-5, 3].map((lz, i) => ({ id: `u-fc-${i + 5}`, venue: 'food-court', name: `Food Court Stall ${i + 5}`, lx: -14.8, lz, w: 3, d: 6, zoning: 'stall', rentPerWeek: 10, price: 350, side: 'l' })),
   ...[-6, -1.5, 3].map((lz, i) => ({ id: `u-hb-${i + 1}`, venue: 'grand-hotel', name: `Lobby Booth ${i + 1}`, lx: -14.8, lz, w: 3, d: 3.6, zoning: 'booth', rentPerWeek: 10, price: 350, side: 'l' })),
   ...[-6, -1.5, 3].map((lz, i) => ({ id: `u-cc-${i + 1}`, venue: 'summit-center', name: `Expo Booth ${i + 1}`, lx: 15.8, lz, w: 3, d: 3.6, zoning: 'booth', rentPerWeek: 14, price: 450, side: 'r' })),
+  // Open-air stalls in Nova Market (same order the renderer builds them).
+  ...[[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 0], [1, -1], [1, 0], [1, 1]].map(([i, j], k) => ({ id: `u-mk-${k + 1}`, venue: 'nova-market', outdoor: true, stallIndex: k, name: `Market Stall ${k + 1}`, lx: i * 10.5, lz: j * 10 + 1.2, w: 4.2, d: 1.4, zoning: 'mstall', rentPerWeek: 8, price: 250 })),
   // Apartment doors line the lobby's back wall; each opens onto a private home.
   ...[['Studio', 18], ['1-bed', 24], ['1-bed', 24], ['2-bed', 32], ['Studio', 18], ['1-bed', 24], ['2-bed', 32], ['Penthouse', 60]].map(([size, rent], i) => ({ id: `u-apt-${i + 1}`, venue: 'nova-heights', name: `Apt ${Math.floor(i / 2) + 2}0${(i % 2) + 1} · ${size}`, lx: -12.6 + i * 3.6, lz: -10.9, w: 2.4, d: 0.6, zoning: 'apartment', rentPerWeek: rent, price: rent * 30, aptSize: size })),
   ...[[-9, 1], [-3, 1], [3, 1], [9, 1], [-9, 5.5], [-3, 5.5]].map(([lx, lz], i) => ({ id: `u-cw-${i + 1}`, venue: 'hive-cowork', name: `Hot Desk ${i + 1}`, lx, lz, w: 2, d: 1.2, zoning: 'desk', rentPerWeek: 6, price: 200 })),
@@ -310,6 +312,14 @@ export const UNIT_SEEDS = {
     { sku: 'bb-pork', name: 'Pork Belly Bao', price: 6, icon: '🥟', desc: 'Pickles, hoisin, peanuts.' },
     { sku: 'bb-veg', name: 'Crispy Tofu Bao', price: 5.5, icon: '🥬', desc: 'Sriracha mayo.' },
     { sku: 'bb-boba', name: 'Bubble Tea', price: 4, icon: '🧋', desc: 'Brown sugar milk tea.' },
+  ] },
+  'u-mk-1': { tenantId: 'u_ayo', tenantName: 'Ayo', template: 'mstall', businessName: 'Thrift Kings', category: 'shop', brand: { logo: '👕', color: '#36d399', tagline: 'Vintage tees & sneakers' }, catalog: [
+    { sku: 'tk-tee', name: 'Vintage Band Tee', price: 12, icon: '👕', desc: 'Pre-loved, washed.' },
+    { sku: 'tk-cap', name: 'Retro Cap', price: 8, icon: '🧢', desc: 'Snapback, one size.' },
+  ] },
+  'u-mk-4': { tenantId: 'u_maya', tenantName: 'Maya', template: 'mstall', businessName: 'Maya Prints', category: 'shop', brand: { logo: '🖼️', color: '#ff8a5b', tagline: 'Photo prints of the city' }, catalog: [
+    { sku: 'mp-a3', name: 'A3 City Print', price: 15, icon: '🖼️', desc: 'Signed photo print.' },
+    { sku: 'mp-cards', name: 'Postcard Pack', price: 5, icon: '✉️', desc: '8 postcards.' },
   ] },
   'u-hb-1': { tenantId: 'u_jay', tenantName: 'Jay', template: 'booth', businessName: 'Jay City Tours', category: 'service', catalog: [
     { sku: 'jt-tour', name: 'City Tour (2 h)', price: 25, icon: '🗺️', desc: 'Guided tour of the city highlights.' },

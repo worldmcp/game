@@ -696,6 +696,13 @@ export class City {
         }
         stall.children.forEach((c) => (c.castShadow = true));
         stall.position.set(i * 10.5, 0.2, j * 10);
+        // Rentable: a header board that shows the tenant's brand.
+        const sign = new THREE.Mesh(plane, new THREE.MeshBasicMaterial({ map: signTexture('FOR RENT', { sub: 'Market stall', accent: '#ffd166', bg: '#0f1722' }), transparent: true }));
+        sign.scale.set(4.2, 0.9, 1);
+        sign.position.set(0, 2.85, 1.95);
+        sign.userData.dynamic = true;
+        stall.add(sign);
+        (this.marketStalls ||= []).push({ stall, sign, key: null });
         for (const ox of [-1.4, 0, 1.4]) this._localObs.push([i * 10.5 + ox, j * 10 + 1.2, 0.72]);
         for (const [px, pz] of [[-2, -1.6], [2, -1.6], [-2, 1.8], [2, 1.8]]) this._localObs.push([i * 10.5 + px, j * 10 + pz, 0.15]);
         if (this.pbr) {
@@ -885,6 +892,24 @@ export class City {
     const hd = (swap ? bw : bd) / 2;
     this.colliders.push({ x0: cx - hw, x1: cx + hw, z0: cz - hd, z1: cz + hd, parcelId });
     this.onCollidersChanged?.();
+  }
+
+  // Market stall signs follow who rents them (brand, or FOR RENT).
+  setMarketStalls(units) {
+    for (const u of units) {
+      const ms = this.marketStalls?.[u.stallIndex];
+      if (!ms) continue;
+      const b = u.building;
+      const key = JSON.stringify([u.status, b?.businessName, b?.brand, u.rentLabel]);
+      if (key === ms.key) continue;
+      ms.key = key;
+      ms.sign.material.map?.dispose();
+      ms.sign.material.map = b?.businessName
+        ? brandSignTexture(b.businessName, b.brand || { color: '#ffd166' }, { sub: `by ${b.tenantName}` })
+        : u.status === 'available' ? signTexture('FOR RENT', { sub: `${u.rentLabel} · rent this stall`, accent: '#ffd166', bg: '#0f1722' }) : signTexture(b?.tenantName || 'Taken', { sub: 'Opening soon', accent: '#8892a6', bg: '#0f1722' });
+      ms.sign.scale.set(4.2, b?.businessName ? 0.9 : 0.9, 1);
+      ms.sign.material.needsUpdate = true;
+    }
   }
 
   // ───────── billboards (World ad inventory) ─────────
