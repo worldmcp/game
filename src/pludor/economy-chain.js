@@ -355,6 +355,141 @@ export function bindEconomyChain(A) {
     }),
   };
 
+  // ───── rides: request a ride, or drive for pay (Wayfare in production) ─────
+  // Fare is escrowed from the rider; a driver who owns a vehicle accepts,
+  // picks up (position-verified) and drops off at the destination, then the
+  // fare settles minus the platform fee. Demo drivers cover quiet times and
+  // demo riders post requests so drivers can always earn.
+  const RIDE_FEE = fees.rides ?? 0.15;
+  const fareFor = (from, to) => money(3 + Math.hypot(to.x - from.x, to.z - from.z) * 0.04);
+  const ownsVehicle = (st) => (eco.virtualItems || []).some((i) => i.kind === 'car' && (st.owned || []).includes(i.id));
+  const rideById = (id) => (A._world().rides || {})[id];
+  const updateRide = (id, patch) => A._mutateWorld((w) => {
+    const r = (w.rides || {})[id];
+    if (!r) throw new PludorError('not_found', 'Ride not found.');
+    Object.assign(r, typeof patch === 'function' ? patch(r) : patch);
+    return { ...r };
+  });
+  const settleRide = (id) => {
+    const r = updateRide(id, (x) => {
+      if (x.status === 'completed') throw new PludorError('invalid', 'Ride already completed.');
+      return { status: 'completed', completedAt: A.now() };
+    });
+    const fee = money(r.fare * RIDE_FEE);
+    const net = money(r.fare - fee);
+    if (r.driverId && !BOT_IDS.has(r.driverId)) A._mutate((st) => A._credit(st, net, 'ride', `Ride · ${r.riderName} → ${r.destName}`), r.driverId);
+    A._mutateWorld((w) => takeFee(w, 'rides', fee));
+    if (r.riderId && !r.demoRider) notifyUser(r.riderId, { kind: 'ride', rideId: id, status: 'completed', destId: r.destId, destName: r.destName });
+    return { ...r, driverNet: net };
+  };
+  const DEMO_RIDERS = (D.NPC_PERSONAS || []).slice(0, 8);
+  const ensureDemoRiders = () => {
+    if (!eco.demo?.botCouriers) return;
+    const open = Object.values(A._world().rides || {}).filter((r) => r.status === 'requested' && r.demoRider);
+    if (open.length >= 2) return;
+    const places = PLACES.filter((p) => !p.walkable);
+    for (let k = open.length; k < 2; k++) {
+      const p = DEMO_RIDERS[Math.floor(Math.random() * DEMO_RIDERS.length)];
+      const a = places[Math.floor(Math.random() * places.length)];
+      let b = places[Math.floor(Math.random() * places.length)];
+      if (b === a) b = places[(places.indexOf(a) + 3) % places.length];
+      const from = entrancePoint(a, 3);
+      const to = entrancePoint(b, 3);
+      const ride = { id: rid('ride'), riderId: p.id, riderName: p.name, demoRider: true, pickup: from, pickupName: a.name, dropoff: to, destId: b.id, destName: b.name, fare: fareFor(from, to), status: 'requested', requestedAt: A.now() };
+      A._mutateWorld((w) => ((w.rides ||= {})[ride.id] = ride));
+    }
+  };
+
+  A.rides = {
+    quote: A._wrap((destId, position) => {
+      const p = PLACES.find((x) => x.id === destId);
+      if (!p) throw new PludorError('not_found', 'Unknown destination.');
+      return { destId, destName: p.name, fare: fareFor(position || { x: 0, z: 0 }, entrancePoint(p, 3)) };
+    }),
+    request: A._wrap((destId, position) => {
+      const p = PLACES.find((x) => x.id === destId);
+      if (!p) throw new PludorError('not_found', 'Unknown destination.');
+      if (!position) throw new PludorError('invalid', 'Location unavailable.');
+      if (Object.values(A._world().rides || {}).some((r) => r.riderId === A.me.id && ['requested', 'accepted', 'on_trip'].includes(r.status))) throw new PludorError('limit', 'You already have a ride on the way.');
+      const to = entrancePoint(p, 3);
+      const fare = fareFor(position, to);
+      const name = A._load().profile.displayName;
+      A._mutate((st) => {
+        A._debit(st, fare, 'ride', `Ride to ${p.name} (held until arrival)`);
+        st.wallet.escrowHeld = money((st.wallet.escrowHeld || 0) + fare);
+      });
+      const ride = { id: rid('ride'), riderId: A.me.id, riderName: name, pickup: { x: position.x, z: position.z }, pickupName: 'your location', dropoff: to, destId, destName: p.name, fare, status: 'requested', requestedAt: A.now() };
+      A._mutateWorld((w) => ((w.rides ||= {})[ride.id] = ride));
+      // No player driver in time? A Wayfare demo driver takes it.
+      if (eco.demo?.botCouriers) {
+        A.schedule(eco.demo.botRideDelayMs ?? 20000, () => {
+          const r = rideById(ride.id);
+          if (r?.status !== 'requested') return;
+          const bot = D.RESIDENTS[Math.floor(Math.random() * D.RESIDENTS.length)];
+          updateRide(ride.id, { status: 'accepted', driverId: bot.id, driverName: `${bot.displayName} (Wayfare)` });
+          notifyUser(ride.riderId, { kind: 'ride', rideId: ride.id, status: 'accepted', driverName: bot.displayName });
+          A.schedule(eco.demo.botTravelMs ?? 15000, () => {
+            if (rideById(ride.id)?.status !== 'accepted') return;
+            A._mutate((st) => (st.wallet.escrowHeld = money(Math.max(0, (st.wallet.escrowHeld || 0) - fare))), ride.riderId);
+            settleRide(ride.id);
+          });
+        });
+      }
+      return ride;
+    }),
+    cancel: A._wrap((rideId) => {
+      const r = rideById(rideId);
+      if (!r || r.riderId !== A.me.id) throw new PludorError('not_found', 'Ride not found.');
+      if (r.status !== 'requested') throw new PludorError('invalid', 'Your driver is already on the way.');
+      updateRide(rideId, { status: 'cancelled' });
+      A._mutate((st) => {
+        st.wallet.escrowHeld = money(Math.max(0, (st.wallet.escrowHeld || 0) - r.fare));
+        A._credit(st, r.fare, 'refund', `Ride cancelled · ${r.destName}`);
+      });
+      return { ok: true };
+    }),
+    mine: A._wrap(() => Object.values(A._world().rides || {}).filter((r) => r.riderId === A.me.id).sort((a, b) => b.requestedAt - a.requestedAt).slice(0, 5)),
+    // Driver side.
+    jobs: A._wrap(() => {
+      ensureDemoRiders();
+      const all = Object.values(A._world().rides || {});
+      return {
+        canDrive: ownsVehicle(A._load()),
+        open: all.filter((r) => r.status === 'requested' && r.riderId !== A.me.id).map((r) => ({ ...r, payout: money(r.fare * (1 - RIDE_FEE)) })),
+        mine: all.filter((r) => r.driverId === A.me.id && ['accepted', 'on_trip'].includes(r.status)),
+        done: all.filter((r) => r.driverId === A.me.id && r.status === 'completed').slice(-10).map((r) => ({ ...r, payout: money(r.fare * (1 - RIDE_FEE)) })),
+      };
+    }),
+    accept: A._wrap((rideId) => {
+      const st = A._load();
+      if (!ownsVehicle(st)) throw new PludorError('no_vehicle', 'You need a vehicle to drive for Wayfare — get one at Nova Motors or the Pludor Store.');
+      if (Object.values(A._world().rides || {}).some((r) => r.driverId === A.me.id && ['accepted', 'on_trip'].includes(r.status))) throw new PludorError('limit', 'Finish your current ride first.');
+      const r = updateRide(rideId, (x) => {
+        if (x.status !== 'requested') throw new PludorError('taken', 'Another driver took this ride.');
+        if (x.riderId === A.me.id) throw new PludorError('invalid', "You can't drive yourself.");
+        return { status: 'accepted', driverId: A.me.id, driverName: st.profile.displayName, acceptedAt: A.now() };
+      });
+      if (!r.demoRider) notifyUser(r.riderId, { kind: 'ride', rideId, status: 'accepted', driverName: st.profile.displayName });
+      return r;
+    }),
+    pickup: A._wrap((rideId, position) => {
+      const r = rideById(rideId);
+      if (!r || r.driverId !== A.me.id) throw new PludorError('forbidden', 'Not your ride.');
+      if (r.status !== 'accepted') throw new PludorError('invalid', 'Already picked up.');
+      if (!near(position, r.pickup, PICKUP_RADIUS + 4)) throw new PludorError('too_far', `Drive to ${r.pickupName} to pick up ${r.riderName}.`);
+      if (!r.demoRider) notifyUser(r.riderId, { kind: 'ride', rideId, status: 'on_trip', driverName: r.driverName });
+      return updateRide(rideId, { status: 'on_trip', pickedUpAt: A.now() });
+    }),
+    dropoff: A._wrap((rideId, position) => {
+      const r = rideById(rideId);
+      if (!r || r.driverId !== A.me.id) throw new PludorError('forbidden', 'Not your ride.');
+      if (r.status !== 'on_trip') throw new PludorError('invalid', 'Pick the rider up first.');
+      if (!near(position, r.dropoff, DROPOFF_RADIUS + 4)) throw new PludorError('too_far', `Drive to ${r.destName} to drop off.`);
+      if (!r.demoRider) A._mutate((st) => (st.wallet.escrowHeld = money(Math.max(0, (st.wallet.escrowHeld || 0) - r.fare))), r.riderId);
+      return settleRide(rideId);
+    }),
+  };
+
   // ───── player marketplace listings ─────
   A.commerce.createListing = A._wrap((spec = {}) => {
     const title = String(spec.title || '').replace(/[<>]/g, '').trim().slice(0, 50);

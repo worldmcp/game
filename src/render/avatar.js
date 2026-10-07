@@ -519,6 +519,7 @@ export function animateAvatar(avatar, t, speed, emote = null) {
     h.actions.walk.timeScale = Math.max(0.6, Math.min(2.4, v / NATURAL.walk));
     h.actions.run.timeScale = Math.max(0.7, Math.min(1.7, v / NATURAL.run));
     h.mixer.update(dt);
+    if (ud.sit) applySit(h);
     return;
   }
   const { legL, legR, armL, armR, rig } = ud.parts;
@@ -539,6 +540,31 @@ export function animateAvatar(avatar, t, speed, emote = null) {
 export function recolorAvatar(avatar, color) {
   // Realistic people keep their clothing; the identity colour lives on the ring.
   avatar.userData.ring?.material.color.set(color);
+}
+
+// Seated pose layered on the idle clip: hips and knees bent ~90°.
+// Axes follow the Biped rig (bend about each bone's local Z).
+export const SIT_POSE = { thigh: [0, 0, 1, 1.45], calf: [0, 0, 1, -1.5], spine: [0, 0, 1, 0.08] };
+const _q = new THREE.Quaternion();
+function applySit(h) {
+  if (!h.sitBones) {
+    h.sitBones = {};
+    h.model.traverse((o) => {
+      if (!o.isBone) return;
+      if (/L[ _]Thigh$/.test(o.name)) h.sitBones.tl = o;
+      if (/R[ _]Thigh$/.test(o.name)) h.sitBones.tr = o;
+      if (/L[ _]Calf$/.test(o.name)) h.sitBones.cl = o;
+      if (/R[ _]Calf$/.test(o.name)) h.sitBones.cr = o;
+      if (/Spine$/.test(o.name)) h.sitBones.sp = o;
+    });
+  }
+  const b = h.sitBones;
+  const rot = (bone, [x, y, z, a]) => bone && bone.quaternion.multiply(_q.setFromAxisAngle(new THREE.Vector3(x, y, z), a));
+  rot(b.tl, SIT_POSE.thigh);
+  rot(b.tr, SIT_POSE.thigh);
+  rot(b.cl, SIT_POSE.calf);
+  rot(b.cr, SIT_POSE.calf);
+  rot(b.sp, SIT_POSE.spine);
 }
 
 // Head-and-shoulders portrait (data URL) for HUD cards.

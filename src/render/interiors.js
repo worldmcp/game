@@ -182,7 +182,7 @@ export function buildInterior(spec) {
   const big = W * D > 500;
   const H = big ? 7 : 4.4;
   const g = new THREE.Group();
-  const out = { group: g, w: W, d: D, h: H, colliders: [], obstacles: [], spots: [], staff: [], tickers: [], kind: spec.kind };
+  const out = { group: g, w: W, d: D, h: H, colliders: [], obstacles: [], spots: [], staff: [], tickers: [], seats: [], kind: spec.kind };
   const accent = spec.accent || '#7c5cff';
 
   const add = (geo, mat, sx, sy, sz, x, y, z, ry = 0) => {
@@ -256,6 +256,7 @@ export function buildInterior(spec) {
 
   const zBack = -D / 2;
   const sit = (x, z, ry = 0, color = '#7a5236') => {
+    out.seats.push({ x, z, ry, h: 0.5 }); // the back is behind, so you face ry
     add(box, M(color, { rough: 0.7 }), 0.46, 0.06, 0.46, x, 0.68, z, ry);
     const back = add(box, M(color, { rough: 0.7 }), 0.46, 0.5, 0.05, x - Math.sin(ry) * 0.22, 0.93, z - Math.cos(ry) * 0.22, ry);
     back.castShadow = false;

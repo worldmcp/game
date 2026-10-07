@@ -312,11 +312,13 @@ export class Hud {
       case 'agent':
         return 'AI agent · uses real Pludor actions';
       case 'billboard':
-        return 'Sponsored · World ad placement';
+        return 'Ad placement · walk up and book it';
       case 'plaza':
         return 'Central Plaza';
       case 'spot':
         return f.sub || '';
+      case 'seat':
+        return app.seated ? 'Resting · move to stand up' : f.sub;
       case 'npc':
         return `${f.sub}${app.llm ? ' · ✨ can chat' : ''}`;
       default:
@@ -365,12 +367,14 @@ export class Hud {
           { id: 'talk', icon: '💬', label: 'Talk', run: () => sheets.open('npc', { id }) },
           ...(app.datingOn?.() && f.persona.dating ? [{ id: 'flirt', icon: '💘', label: 'Flirt', run: () => sheets.open('npc', { id, opener: 'flirt' }) }] : []),
         ];
+      case 'seat':
+        return app.seated ? [{ id: 'stand', icon: '🚶', label: 'Stand up', run: () => app.stand() }] : [{ id: 'sit', icon: '🪑', label: 'Sit', run: () => app.sitAt(f.seat) }];
       case 'mycar':
         return [{ id: 'drive', icon: '🚗', label: 'Drive', run: () => app.startDriving(id) }, { id: 'travel', icon: '🗺️', label: 'Fast travel', run: () => sheets.open('map') }];
       case 'agent':
         return [{ id: 'talk', icon: '🤖', label: `Talk to ${AGENTS.find((a) => a.id === id).name}`, run: () => sheets.open('agent', { id }) }];
       case 'billboard':
-        return [{ id: 'view', icon: '📣', label: 'View ad', run: () => sheets.open('billboard', { id }) }];
+        return [{ id: 'buy', icon: '📣', label: 'Advertise here', run: () => sheets.open('billboard', { id }) }];
       case 'plaza':
         return [
           { id: 'coin', icon: '🪙', label: 'Toss a coin', run: () => sheets.activity('fountain', 'central-plaza') },

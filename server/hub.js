@@ -13,7 +13,7 @@ const INTEREST_RADIUS = 160;
 const MAX_SPEED = 9; // m/s (run is 6.5; generous for latency)
 const BOUNDS = { x0: -DISTRICT.half - 6, x1: DISTRICT.half + 6, z0: -DISTRICT.half - 6, z1: 116 };
 const PRESENCES = new Set(['Online', 'Away', 'Busy', 'Working', 'Shopping', 'Playing', 'Learning', 'Available for Work', 'Hiring', 'In Conversation', 'At Event', 'Invisible']);
-const EMOTES = new Set(['wave', 'talk']);
+const EMOTES = new Set(['wave', 'talk', 'sit']);
 const CLIENT_TYPES = new Set(['state', 'wave', 'hello']);
 
 export class Hub {

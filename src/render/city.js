@@ -77,6 +77,7 @@ export class City {
     scene.add(this.root);
     this.colliders = [];
     this.obstacles = []; // [x, z, r] round props people must walk around
+    this.seats = []; // {x, z, ry} places a player can sit
     this._localObs = [];
     this.pickables = [];
     this.windowMats = [];
@@ -109,6 +110,7 @@ export class City {
     for (const c of cfg.filler) this._filler(c);
     if (cfg.billboards.length) this._placeBanners();
     this._streetFurniture();
+    if (cfg.billboards.length) this._streetPanels();
     for (const g of this.placeGroups.values()) batchStatic(g);
     batchStatic(this.root);
     if (this.pbr) {
@@ -125,9 +127,8 @@ export class City {
     } else this._skyline();
     this._river();
     // The city keeps going past the playable district.
-    const exits = [];
-    for (const c of DISTRICT.roads) exits.push({ x: c, z: -DISTRICT.half - 3, ry: 0 }, { x: -DISTRICT.half - 3, z: c, ry: Math.PI / 2 }, { x: DISTRICT.half + 3, z: c, ry: Math.PI / 2 });
-    const outer = createOuterCity({ half: DISTRICT.half, quality: this.quality, exits });
+    // Roads run on into the outer city; nothing blocks the lanes.
+    const outer = createOuterCity({ half: DISTRICT.half, quality: this.quality, exits: [] });
     this.root.add(outer.group);
     this.windowMats.push(...outer.windowMats);
     this.nightMats.push(...outer.nightMats);
@@ -162,8 +163,29 @@ export class City {
     const mz = mk(roadWidth / 6, len / 6);
     const mx = mk(len / 6, roadWidth / 6);
     const plain = mk(roadWidth / 6, roadWidth / 6);
-    // Segments along a road; inner roads stop at the pedestrian promenade.
-    const segs = (r) => (Math.abs(r) < PROMENADE ? [[-(len / 2 + PROMENADE) / 2, len / 2 - PROMENADE], [(len / 2 + PROMENADE) / 2, len / 2 - PROMENADE]] : [[0, len]]);
+    // Segments along a road. Inner roads are pedestrian promenades from the
+    // plaza out to the ring road, then carry on as streets beyond it, so no
+    // asphalt ends in a dead end.
+    const RING = 70;
+    const segs = (r) => (Math.abs(r) < PROMENADE ? [[-(len / 2 + RING) / 2, len / 2 - RING], [(len / 2 + RING) / 2, len / 2 - RING]] : [[0, len]]);
+    for (const r of roads) {
+      if (Math.abs(r) >= PROMENADE) continue;
+      for (const sgn of [-1, 1]) {
+        const c = sgn * (PROMENADE + RING) / 2;
+        const l = RING - PROMENADE;
+        const pa = new THREE.Mesh(plane, this.mats.sidewalk);
+        pa.scale.set(roadWidth, l, 1);
+        pa.rotation.x = -Math.PI / 2;
+        pa.position.set(r, 0.012, c);
+        pa.receiveShadow = true;
+        const pb = new THREE.Mesh(plane, this.mats.sidewalk);
+        pb.scale.set(l, roadWidth, 1);
+        pb.rotation.x = -Math.PI / 2;
+        pb.position.set(c, 0.014, r);
+        pb.receiveShadow = true;
+        this.root.add(pa, pb);
+      }
+    }
     for (const r of roads) {
       for (const [c, l] of segs(r)) {
         const za = new THREE.Mesh(plane, mz);
@@ -185,7 +207,7 @@ export class City {
     for (const r of roads) {
       for (let t = -half - 10; t < half + 10; t += 6) {
         if (roads.some((q) => Math.abs(t + 1.5 - q) < roadWidth / 2 + 1.5)) continue;
-        if (Math.abs(r) < PROMENADE && Math.abs(t + 1.5) < PROMENADE + 2) continue;
+        if (Math.abs(r) < PROMENADE && Math.abs(t + 1.5) < 72) continue;
         dashes.push([r, t + 1.5, 0], [t + 1.5, r, 1]);
       }
       for (const off of [-roadWidth / 2 + 0.35, roadWidth / 2 - 0.35])
@@ -207,6 +229,8 @@ export class City {
     for (const x of roads)
       for (const z of roads) {
         if (Math.abs(x) < PROMENADE && Math.abs(z) < PROMENADE) continue;
+        // Promenade crossings (inner road meets inner road) have no asphalt.
+        if ((Math.abs(x) < PROMENADE && Math.abs(z) < 70) || (Math.abs(z) < PROMENADE && Math.abs(x) < 70)) continue;
         const s = new THREE.Mesh(plane, plain);
         s.scale.set(roadWidth, roadWidth, 1);
         s.rotation.x = -Math.PI / 2;
@@ -316,6 +340,7 @@ export class City {
       this.root.add(bench);
       const th = bench.rotation.y;
       for (const o of [-0.75, 0, 0.75]) this.obstacles.push([bench.position.x + Math.cos(th) * o, bench.position.z - Math.sin(th) * o, 0.42]);
+      for (const o of [-0.5, 0.5]) this.seats.push({ x: bench.position.x + Math.cos(th) * o + Math.sin(th) * 0.05, z: bench.position.z - Math.sin(th) * o + Math.cos(th) * 0.05, ry: th, h: 0.42 });
     }
   }
 
@@ -336,6 +361,12 @@ export class City {
       ...addTerrace(this.root, { x: -25.5, z: -10.5, w: 6, d: 13, cols: 2, rows: 3, colors: ['#f4efe6', '#2f6e5a'] }),
       ...addTerrace(this.root, { x: -25.5, z: 10.5, w: 6, d: 13, cols: 2, rows: 3, colors: ['#b5422c', '#f4efe6'] }),
     ];
+    for (let k = 0; k + 1 < this.terraceSeats.length; k += 2) {
+      const [a, b] = [this.terraceSeats[k], this.terraceSeats[k + 1]];
+      const mx = (a.x + b.x) / 2;
+      const mz = (a.z + b.z) / 2;
+      for (const s of [a, b]) this.seats.push({ x: s.x, z: s.z, ry: Math.atan2(mx - s.x, mz - s.z), h: 0.48 });
+    }
     for (let k = 0; k + 1 < this.terraceSeats.length; k += 2) {
       const [a, b] = [this.terraceSeats[k], this.terraceSeats[k + 1]];
       this.obstacles.push([(a.x + b.x) / 2, (a.z + b.z) / 2, 0.55], [a.x, a.z, 0.3], [b.x, b.z, 0.3]);
@@ -918,7 +949,7 @@ export class City {
     g.position.set(b.x, b.y + 0.2, b.z);
     g.rotation.y = Math.atan2(b.lookAt[0] - b.x, b.lookAt[1] - b.z);
     g.userData.ref = { type: 'billboard', id: b.id };
-    if (!b.y && b.pole > 1) {
+    if (!b.y && b.pole > 0.4) {
       for (const sx of [-1, 1]) {
         const ox = sx * b.w * 0.3;
         this.obstacles.push([b.x + Math.cos(g.rotation.y) * ox, b.z - Math.sin(g.rotation.y) * ox, 0.3]);
@@ -1133,6 +1164,25 @@ export class City {
       head.setMatrixAt(k, m);
     });
     this.root.add(pole, head);
+  }
+
+  // Street-level ad panels along the sidewalks, facing the traffic.
+  _streetPanels() {
+    let n = 0;
+    const clear = (x, z) => !this._blocked(x, z, 1.2) && !this.obstacles.some(([ox, oz, r]) => Math.hypot(ox - x, oz - z) < r + 1.4) && !this.adSlots.some((s) => !s.y && Math.hypot(s.x - x, s.z - z) < 8);
+    for (let i = -2; i <= 2 && n < 28; i++)
+      for (let j = -2; j <= 2 && n < 28; j++) {
+        if (i === 0 && j === 0) continue;
+        const b = cellBounds(i, j);
+        const mx = (b.x0 + b.x1) / 2 + 4;
+        const mz = (b.z0 + b.z1) / 2 + 4;
+        const edges = [[mx, b.z0 + 2.2, mx, b.z0 - 8], [mx, b.z1 - 2.2, mx, b.z1 + 8], [b.x0 + 2.2, mz, b.x0 - 8, mz], [b.x1 - 2.2, mz, b.x1 + 8, mz]];
+        for (const [x, z, lx, lz] of edges) {
+          if (n >= 28 || Math.abs(x) > DISTRICT.half - 2 || Math.abs(z) > DISTRICT.half - 2 || !clear(x, z)) continue;
+          n += 1;
+          this._billboard({ id: `street-${n}`, placementId: `world.central.street-${n}`, x, z, y: 0, w: 1.5, h: 2.2, pole: 0.6, lookAt: [lx, lz] });
+        }
+      }
   }
 
   _skyline() {

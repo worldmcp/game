@@ -276,3 +276,36 @@ test('players can book a World ad placement in-game', async () => {
   assert.notEqual(other.id, ad.id);
   await assert.rejects(adapter.ads.bookPlacement({ placementId: 'world.central.wall-m2m20', days: 0, creative: { headline: 'x' } }), /1–30/);
 });
+
+test('rides: rider pays on arrival via demo driver; players with a car drive for pay', async () => {
+  const storage = memoryStorage();
+  const h = harness(storage, 'u_rider');
+  const rider = h.adapter;
+  const before = (await rider.wallet.getWallet()).balance;
+  const ride = await rider.rides.request('arcade', { x: 0, z: 25 });
+  assert.ok(ride.fare > 3);
+  await assert.rejects(rider.rides.request('academy', { x: 0, z: 25 }), /already have a ride/);
+  await h.advance(20000);
+  await h.advance(15000);
+  const done = (await rider.rides.mine())[0];
+  assert.equal(done.status, 'completed');
+  assert.equal(Math.round(((await rider.wallet.getWallet()).balance - (before - ride.fare)) * 100), 0);
+  const d = harness(storage, 'u_driver');
+  const driver = d.adapter;
+  let jobs = await driver.rides.jobs();
+  assert.equal(jobs.canDrive, false);
+  const job = jobs.open[0];
+  await assert.rejects(driver.rides.accept(job.id), /need a vehicle/);
+  const k = 'pludor-demo:user:u_driver';
+  const st = storage.get(k);
+  st.points = 1000;
+  storage.set(k, st);
+  await driver.shop.buyVirtual('car-scooter');
+  await driver.rides.accept(job.id);
+  await assert.rejects(driver.rides.pickup(job.id, { x: 999, z: 999 }), /Drive to/);
+  await driver.rides.pickup(job.id, job.pickup);
+  const pre = (await driver.wallet.getWallet()).balance;
+  const r = await driver.rides.dropoff(job.id, job.dropoff);
+  assert.equal(r.status, 'completed');
+  assert.ok((await driver.wallet.getWallet()).balance > pre, 'driver paid');
+});

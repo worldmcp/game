@@ -295,6 +295,7 @@ export class WorldApp {
       const r = R + off;
       let ring = [[-r, -r], [r, -r], [r, r], [-r, r]];
       if (!cw) ring = ring.reverse();
+      ring = roundCorners(ring, 4.5);
       let g;
       let brake = null;
       if (this.carTemplate) {
@@ -341,7 +342,7 @@ export class WorldApp {
         }
       }
       if (brake.emissive) brake.emissive.set('#ff1a1a');
-      this.cars.push({ g, ring, seg: k % 4, t: (k * 0.29) % 1, speed: 7 + (k % 3) * 2, brake, honkAt: 0, blockedFor: 0 });
+      this.cars.push({ g, ring, seg: (k * 5 + (k >> 1) * 2) % ring.length, t: (k * 0.29) % 1, speed: 7 + (k % 3) * 2, brake, honkAt: 0, blockedFor: 0 });
     }
   }
 
@@ -575,6 +576,16 @@ export class WorldApp {
         this.hud.notify({ icon: '🧾', title: evt.businessName, body: evt.status === 'placed' ? 'New order — accept it in your store' : evt.status === 'sold' ? 'Your listing sold!' : `Order ${String(evt.status).replace(/_/g, ' ')}`, action: () => this.sheets.open('land') });
         this._refreshSoon();
         break;
+      case 'ride':
+        if (evt.status === 'completed' && evt.destId) {
+          this.hud.notify({ icon: '🚗', title: 'You have arrived', body: evt.destName, action: () => this.sheets.open('ride') });
+          this.stopDriving();
+          if (this.inside) this._leaveInterior();
+          this.api.world.worldRide(evt.destId).catch(() => {}).finally(() => this.teleport(evt.destId));
+          this.refreshLight();
+        } else this.hud.notify({ icon: '🚗', title: 'Your ride', body: evt.status === 'accepted' ? `${evt.driverName} is on the way` : 'On the way', action: () => this.sheets.open('ride') });
+        if (this.sheets.top?.view === 'ride') this.sheets.refresh();
+        break;
       case 'delivery':
         this.hud.notify({ icon: '🛵', title: 'Delivery', body: `${evt.businessName}: ${String(evt.status).replace(/_/g, ' ')}`, action: () => this.sheets.open('work', { tab: 'deliveries' }) });
         break;
@@ -727,6 +738,8 @@ export class WorldApp {
         return this.focus?.acts?.[0]?.run();
       case 'mycar':
         return this.startDriving(ref.id);
+      case 'seat':
+        return this.sitAt(this.focus?.seat);
       default:
     }
   }
@@ -884,6 +897,29 @@ export class WorldApp {
     this.hud.setDriving?.(null);
   }
 
+  // ───── sitting: benches, café chairs, any chair indoors ─────
+  sitAt(seat) {
+    if (this.seated) return this.stand();
+    if (!seat || this.driving) return;
+    this.cancelNav();
+    this.seated = seat;
+    this.player.position.set(seat.x, this.floorY, seat.z);
+    this.player.rotation.y = seat.ry;
+    this.player.userData.sit = true;
+    this.speed = 0;
+    this.emote = 'sit';
+    clearTimeout(this._restT);
+    this._restT = setTimeout(() => this.seated === seat && this.sheets.activity('rest', this.inside?.spec.placeId || 'central-plaza'), 1500);
+  }
+
+  stand() {
+    if (!this.seated) return;
+    this.seated = null;
+    this.player.userData.sit = false;
+    if (this.emote === 'sit') this.emote = null;
+    this.player.position.y = this.floorY;
+  }
+
   // ───────────────────────── avatar studio ─────────────────────────
   startStudio() {
     if (this.studio) return;
@@ -1033,6 +1069,10 @@ export class WorldApp {
     built.spots.forEach((sp, i) => {
       const w = toW(sp.x, sp.z);
       grid.upsert(`spot:${i}`, w.x, w.z, { ref: { type: 'spot', id: `${spec.key}#${i}` }, label: sp.label, sub: sp.sub, r: sp.r, acts: sp.acts.map((a) => ({ id: a.id, icon: a.icon, label: a.label, run: () => this._spotAction(a.action, spec) })) });
+    });
+    built.seats.forEach((st, i) => {
+      const w = toW(st.x, st.z);
+      grid.upsert(`seat:${i}`, w.x, w.z, { ref: { type: 'seat', id: i }, label: 'Seat', sub: 'Sit down', r: 1, seat: { x: w.x, z: w.z, ry: st.ry + this._rot(spec.facing), h: st.h, inside: true } });
     });
     const staff = built.staff.map((st, i) => {
       const av = createAvatar({ seed: 500 + i, quality: this.quality, person: st.person });
@@ -1355,6 +1395,14 @@ export class WorldApp {
     if (this.driving && !this.inside) return this._driveCar(dt, t);
     const pos = this.player.position;
     const { ix, iz, run } = this.studio ? { ix: 0, iz: 0, run: false } : this._input();
+    if (this.seated) {
+      if (ix || iz || this.nav) this.stand();
+      else {
+        pos.y = this.floorY - (this.seated.h ?? 0.45);
+        animateAvatar(this.player, t, 0, null);
+        return;
+      }
+    }
     let dx = 0;
     let dz = 0;
     if (ix || iz) {
@@ -1661,8 +1709,12 @@ export class WorldApp {
       const saved = c.speed;
       c.speed = c.v;
       step(c, (x, z, ry) => {
-        c.g.position.set(x, 0, z);
-        c.g.rotation.y = ry;
+        // Round the corners: steer smoothly onto the next street instead of
+        // snapping, and keep the car on the asphalt (y = road surface).
+        c.g.position.set(x, 0.01, z);
+        let diff = ry - c.g.rotation.y;
+        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+        c.g.rotation.y += diff * Math.min(1, dt * 5);
       });
       c.speed = saved;
     }
@@ -1685,8 +1737,9 @@ export class WorldApp {
       e.speed += ((p.moving ? Math.min(6.5, Math.max(1.4, v)) : 0) - e.speed) * k;
       // Interiors share x/z with the city: only show people in the same space.
       e.avatar.visible = (p.inside || null) === (this.inside?.key || null);
-      e.avatar.position.y = p.inside ? INTERIOR_Y + 0.2 : 0.2;
-      if (e.avatar.visible) animateAvatar(e.avatar, t, e.speed / 6, p.emote);
+      e.avatar.userData.sit = p.emote === 'sit';
+      e.avatar.position.y = (p.inside ? INTERIOR_Y + 0.2 : 0.2) - (p.emote === 'sit' ? 0.45 : 0);
+      if (e.avatar.visible) animateAvatar(e.avatar, t, e.speed / 6, p.emote === 'sit' ? null : p.emote);
     }
   }
 
@@ -1733,9 +1786,10 @@ export class WorldApp {
       }
       for (const p of PARCELS.filter((x) => x.outdoor)) this._grid.upsert(`parcel:${p.id}`, p.x, p.z, { ref: { type: 'parcel', id: p.id }, label: p.name, r: 3.2 });
       for (const p of PARCELS.filter((x) => !x.venue)) this._grid.upsert(`parcel:${p.id}`, p.x, p.z - p.d / 2 - 1, { ref: { type: 'parcel', id: p.id }, label: p.name, r: 8 });
-      if (this.flags.WORLD_ADS_ENABLED) for (const b of this.city.adSlots.filter((x) => !x.y)) this._grid.upsert(`bb:${b.id}`, b.x, b.z, { ref: { type: 'billboard', id: b.id }, label: 'Billboard', r: 9 });
+      if (this.flags.WORLD_ADS_ENABLED) for (const b of this.city.adSlots.filter((x) => !x.indoor)) this._grid.upsert(`bb:${b.id}`, b.x, b.z, { ref: { type: 'billboard', id: b.id }, label: b.y ? 'Ad space above' : /street-/.test(b.id) ? 'Street ad panel' : 'Billboard', r: b.y ? 7 : /street-/.test(b.id) ? 3.5 : 8 });
       for (const a of AGENTS) this._grid.upsert(`agent:${a.id}`, a.x, a.z, { ref: { type: 'agent', id: a.id }, label: `${a.name} · ${a.role}`, r: 4.5 });
       for (const g of this.myCars || []) this._grid.upsert(`mycar:${g.userData.ref.id}`, g.position.x, g.position.z, { ref: g.userData.ref, label: 'Your car', r: 4 });
+      this.city.seats.forEach((s, i) => this._grid.upsert(`seat:${i}`, s.x, s.z, { ref: { type: 'seat', id: i }, label: 'Seat', sub: 'Sit down and rest', r: 1.2, seat: s }));
       this._grid.upsert('plaza', 0, 0, { ref: { type: 'plaza', id: PLAZA.id }, label: 'Central Plaza fountain', r: 8.5 });
     }
     if (!this.inside) for (const [id, n] of this.npcs || []) {
@@ -1902,6 +1956,27 @@ export class WorldApp {
     }
     this.api.world.listReels().then((r) => (this._reel = r[Math.floor(Date.now() / 12000) % r.length]));
   }
+}
+
+// Replace each sharp corner of a closed route with a short arc so vehicles
+// turn like vehicles instead of pivoting on the spot.
+function roundCorners(ring, rad, n = 4) {
+  const out = [];
+  for (let i = 0; i < ring.length; i++) {
+    const p = ring[(i - 1 + ring.length) % ring.length];
+    const c = ring[i];
+    const q = ring[(i + 1) % ring.length];
+    const d1 = Math.hypot(c[0] - p[0], c[1] - p[1]);
+    const d2 = Math.hypot(q[0] - c[0], q[1] - c[1]);
+    const a = [c[0] + ((p[0] - c[0]) / d1) * rad, c[1] + ((p[1] - c[1]) / d1) * rad];
+    const b = [c[0] + ((q[0] - c[0]) / d2) * rad, c[1] + ((q[1] - c[1]) / d2) * rad];
+    for (let k = 0; k <= n; k++) {
+      const t = k / n;
+      // Quadratic Bézier through the corner.
+      out.push([(1 - t) ** 2 * a[0] + 2 * (1 - t) * t * c[0] + t * t * b[0], (1 - t) ** 2 * a[1] + 2 * (1 - t) * t * c[1] + t * t * b[1]]);
+    }
+  }
+  return out;
 }
 
 function frame() {

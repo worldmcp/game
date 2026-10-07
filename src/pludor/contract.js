@@ -34,6 +34,7 @@ export const CONTRACT = {
   land: ['listParcels', 'rent', 'openBusiness'],
   shop: ['listVirtual', 'buyVirtual', 'owned'],
   radio: ['playlist', 'promote'],
+  rides: ['quote', 'request', 'cancel', 'mine', 'jobs', 'accept', 'pickup', 'dropoff'],
   games: ['startGame', 'submitGame'],
   ads: ['getCreative', 'trackImpression', 'trackInteraction', 'getStats', 'placementInfo', 'bookPlacement'],
   events: ['listEvents', 'buyTicket', 'attend'],

@@ -539,7 +539,10 @@ PLACE_KINDS.market = {
   async render(app, props, s, p) {
     const listings = await app.api.commerce.listListings();
     const bought = new Set((await app.api.commerce.getOrders()).orders.map((o) => o.listingId).filter(Boolean));
-    return html`${placeHeader(app, p)}<p class="pw-blurb">Every stall is a live Pludor Marketplace listing. Haggle with sellers in messages, buy with checkout.</p>${eventStrip(app, p.id)}
+    const stalls = app.state.parcels.filter((u) => u.venue === p.id);
+    return html`${placeHeader(app, p)}<p class="pw-blurb">Rent a stall to sell your own goods under your brand, or browse player listings below.</p>${eventStrip(app, p.id)}
+      <h4>Stalls</h4>${renderUnits(app, stalls)}
+      <h4>Listings</h4>
       <div class="pw-list">${listings.map((l) => html`<div class="pw-item"><div class="pw-item-icon">${l.icon}</div><div class="pw-item-body"><b>${l.title}</b><small>${l.condition} · @${l.seller.handle}</small><span class="pw-price">${$m(l.price)}</span></div>
         <div class="pw-col">${bought.has(l.id) ? html`<span class="pw-tag ok">Bought</span>` : btn('Buy', 'buy', l.id, 'sm')}${btn('Message', 'chat', l.sellerId, 'sm ghost')}</div></div>`)}</div>
       <form class="pw-form" data-form="sell"><h4>Sell something</h4><p class="pw-muted">List an item for other players. You get paid when it sells (${Math.round(ECONOMY.fees.marketplace * 100)}% marketplace fee).</p>
@@ -715,7 +718,8 @@ PLACE_KINDS.transit = {
       <div class="pw-chips">${dests.map((d) => html`<button class="pw-chip-btn" ${A('ride', d.id)}>${KIND_ICON[d.kind] || '⛲'} ${d.name}</button>`)}</div>
       <h4>Real-world Wayfare</h4>
       <div class="pw-grid3">
-        <button class="pw-tile" ${A('link', { key: 'wayfare.rides' })}><span>🚗</span>Book a ride</button>
+        <button class="pw-tile" ${A('view', { view: 'ride', props: {} })}><span>🚗</span>Book a ride</button>
+        <button class="pw-tile" ${A('view', { view: 'work', props: { tab: 'rides' } })}><span>🧑‍✈️</span>Drive & earn</button>
         <button class="pw-tile" ${A('link', { key: 'wayfare.courier' })}><span>📦</span>Send a package</button>
         <button class="pw-tile" ${A('link', { key: 'wayfare.rentals' })}><span>🔑</span>Rentals</button></div>
       ${workBoard(app, { placeId: p.id })}`;
@@ -1466,9 +1470,10 @@ VIEWS.work = {
     let body;
     if (props.tab === 'board') body = workBoard(app, { placeId: props.placeId });
     else if (props.tab === 'deliveries') body = await deliveriesBoard(app);
+    else if (props.tab === 'rides') body = await ridesBoard(app);
     else if (props.tab === 'mine') body = await myWork(app);
     else body = postGigForm(props);
-    return html`${tabs(props, [['board', 'Gigs'], ['deliveries', '🛵 Deliveries'], ['mine', 'My work'], ['post', 'Hire someone']])}${body}`;
+    return html`${tabs(props, [['board', 'Gigs'], ['deliveries', '🛵 Deliveries'], ['rides', '🚗 Rides'], ['mine', 'My work'], ['post', 'Hire someone']])}${body}`;
   },
   actions: {
     tab: tabAction,
@@ -1478,6 +1483,22 @@ VIEWS.work = {
       s.render();
     },
     ...deliveryActions(),
+    async rideAccept(app, props, id, s) {
+      await app.api.rides.accept(id);
+      app.hud.toast('Ride accepted — go pick them up', '🚗');
+      s.render(true);
+    },
+    async ridePickup(app, props, id, s) {
+      await app.api.rides.pickup(id, { x: app.player.position.x, z: app.player.position.z });
+      app.hud.toast('Rider on board — head to the destination', '👋');
+      s.render(true);
+    },
+    async rideDropoff(app, props, id, s) {
+      const r = await app.api.rides.dropoff(id, { x: app.player.position.x, z: app.player.position.z });
+      app.hud.toast(`Ride complete · +${$m(r.driverNet)}`, '💸');
+      await app.refreshLight();
+      s.render(true);
+    },
   },
   forms: { post: postGigSubmit },
 };
@@ -1982,6 +2003,62 @@ async function storeManager(app, parcel) {
       <div class="pw-grid2"><input name="icon" maxlength="2" placeholder="Emoji e.g. 🍔"><button class="pw-btn">Add product</button></div></form>`;
 }
 
+async function ridesBoard(app) {
+  const j = await app.api.rides.jobs();
+  const pp = app.player.position;
+  const d = (pt) => (pt ? Math.round(Math.hypot(pt.x - pp.x, pt.z - pp.z)) : '?');
+  const active = j.mine[0];
+  let card = '';
+  if (active) {
+    const toPickup = active.status === 'accepted';
+    const target = toPickup ? active.pickup : active.dropoff;
+    card = html`<div class="pw-delivery"><b>🚗 Your ride · ${active.riderName}</b><small>${toPickup ? `Pick up at ${active.pickupName}` : `Drop off at ${active.destName}`} · ${d(target)} m away</small>
+      <ol class="pw-steps-row"><li class="done">Accepted</li><li class="${toPickup ? 'cur' : 'done'}">Pick up</li><li class="${toPickup ? '' : 'cur'}">Drop off</li></ol>
+      <div class="pw-row">${btn('🧭 Navigate', 'go', { x: target.x, z: target.z, label: toPickup ? active.riderName : active.destName })}${btn(toPickup ? '👋 Pick up rider' : '✅ Drop off', toPickup ? 'ridePickup' : 'rideDropoff', active.id, 'ghost')}</div></div>`;
+  }
+  return html`<p class="pw-muted">Drive for Wayfare: take ride requests from people in the city, pick them up and drop them off — paid on arrival (${Math.round((1 - (ECONOMY.fees.rides ?? 0.15)) * 100)}% of the fare).</p>
+    ${j.canDrive ? '' : html`<div class="pw-note">🚗 You need a vehicle to drive. ${btn('Get one', 'view', { view: 'vstore', props: {} }, 'sm')} ${btn('Nova Motors', 'go', goArg(placeById('nova-motors')), 'sm ghost')}</div>`}
+    ${card}
+    <h4>Ride requests (${j.open.length})</h4>${j.open.length ? html`<div class="pw-list">${j.open.map((r) => html`<div class="pw-result"><div><b>${r.riderName} → ${r.destName}</b><small>${d(r.pickup)} m to pickup · from ${r.pickupName}</small></div><div class="pw-row tight"><b class="pw-pay">${$m(r.payout)}</b>${active || !j.canDrive ? '' : btn('Accept', 'rideAccept', r.id, 'sm')}</div></div>`)}</div>` : empty('No ride requests right now.')}
+    ${j.done.length ? html`<h4>Completed</h4><div class="pw-list">${j.done.map((r) => html`<div class="pw-tx"><div><b>${r.riderName}</b><small>to ${r.destName}</small></div><b class="pos">+${$m(r.payout)}</b></div>`)}</div>` : ''}`;
+}
+
+// RIDE (rider side) ─────────────────────────────────────────
+VIEWS.ride = {
+  title: 'Book a ride',
+  async render(app, props) {
+    const mine = (await app.api.rides.mine())[0];
+    const pp = app.player.position;
+    if (mine && ['requested', 'accepted', 'on_trip'].includes(mine.status)) {
+      const label = { requested: 'Finding a driver…', accepted: `${mine.driverName || 'Your driver'} is on the way`, on_trip: 'On the way' }[mine.status];
+      return html`<div class="pw-delivery"><b>🚗 ${label}</b><small>To ${mine.destName} · ${$m(mine.fare)} held until arrival</small>
+        <ol class="pw-steps-row"><li class="done">Requested</li><li class="${mine.status === 'requested' ? 'cur' : 'done'}">Driver</li><li class="${mine.status === 'on_trip' ? 'cur' : ''}">Arrive</li></ol>
+        ${mine.status === 'requested' ? btn('Cancel ride', 'cancelRide', mine.id, 'ghost') : ''}</div>
+        <p class="pw-muted">Any player with a car can take your request; otherwise a Wayfare driver arrives shortly.</p>`;
+    }
+    const places = PLACES.filter((p) => !p.ageRestricted || app.isAdult()).map((p) => {
+      const e = entrancePoint(p, 3);
+      return { p, dist: Math.hypot(e.x - pp.x, e.z - pp.z), fare: 3 + Math.hypot(e.x - pp.x, e.z - pp.z) * 0.04 };
+    }).filter((x) => x.dist > 25).sort((a, b) => a.p.name.localeCompare(b.p.name));
+    return html`<p class="pw-muted">Pick a destination. The fare is held from your wallet and paid to the driver when you arrive.</p>
+      <div class="pw-list">${places.map(({ p, dist, fare }) => html`<div class="pw-result"><div><b>${p.name}</b><small>${Math.round(dist)} m</small></div><div class="pw-row tight"><b class="pw-pay">${$m(fare)}</b>${btn('Ride', 'requestRide', p.id, 'sm')}</div></div>`)}</div>`;
+  },
+  actions: {
+    async requestRide(app, props, id, s) {
+      const p = placeById(id);
+      if (!(await app.hud.confirm(`Ride to ${p.name}?`, 'The fare is held from your Pludor Wallet until you arrive.', 'Request ride'))) return;
+      await app.api.rides.request(id, { x: app.player.position.x, z: app.player.position.z });
+      app.hud.toast('Ride requested — looking for a driver', '🚗');
+      s.render(true);
+    },
+    async cancelRide(app, props, id, s) {
+      await app.api.rides.cancel(id);
+      app.hud.toast('Ride cancelled and refunded', '↩️');
+      s.render(true);
+    },
+  },
+};
+
 async function deliveriesBoard(app) {
   const j = await app.api.delivery.jobs();
   const pp = app.player.position;
@@ -2137,6 +2214,8 @@ VIEWS.earn = {
     const myBiz = await app.api.business.mine();
     const tiles = [
       ['🛵', 'Deliver orders', `${jobs.open.length} open · from ${$m(ECONOMY.deliveryFee * (1 - ECONOMY.fees.delivery))}`, { view: 'work', props: { tab: 'deliveries' } }],
+      ['🚗', 'Drive for Wayfare', 'Take ride requests · paid per trip', { view: 'work', props: { tab: 'rides' } }],
+      ['🧺', 'Rent a market stall', 'Sell your goods at Nova Market', { view: 'place', props: { id: 'nova-market' } }],
       ['💼', 'Gigs & services', `${ok} you qualify for`, { view: 'work', props: { tab: 'board' } }],
       ['🏪', myBiz.length ? 'Your business' : 'Open a business', myBiz.length ? `${myBiz[0].name} · ${$m(myBiz[0].revenue)} earned` : 'Rent a lot, sell to players', { view: 'land' }],
       ['🏷️', 'Sell on the market', 'List items for other players', { view: 'place', props: { id: 'nova-market' } }],
