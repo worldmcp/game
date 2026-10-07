@@ -70,7 +70,7 @@ export class WorldApp {
     }
     onProgress(0.4, `Building ${WORLD.name}`);
     await frame();
-    this.city = new City(this.scene, { quality: this.quality, places: PLACES, parcels: PARCELS, billboards: this.flags.WORLD_ADS_ENABLED ? BILLBOARDS : [], plaza: PLAZA, filler: FILLER_CELLS, tools: TOOLS, agents: AGENTS });
+    this.city = new City(this.scene, { quality: this.quality, places: PLACES, parcels: PARCELS.filter((p) => !p.venue), billboards: this.flags.WORLD_ADS_ENABLED ? BILLBOARDS : [], plaza: PLAZA, filler: FILLER_CELLS, tools: TOOLS, agents: AGENTS });
     this.obstacles = new Obstacles(4);
     for (const [x, z, r] of this.city.obstacles) this.obstacles.add(x, z, r);
     this.crowd = [];
@@ -474,7 +474,7 @@ export class WorldApp {
         this.scene.add(av);
         entry = { id: peer.id, avatar: av, speed: 0 };
         this.peers.set(peer.id, entry);
-        this.hud.toast(`@${peer.handle} entered Nova City`, '👋');
+        this.hud.toast(`@${peer.handle} entered ${WORLD.name}`, '👋');
       }
     }
     for (const [id, e] of this.peers) {
@@ -501,6 +501,7 @@ export class WorldApp {
     Object.assign(this.state, { profile, progress, wallet, needs, gigs, parcels, events, tokens, courses });
     if (profile.avatar && profile.avatar !== this.player.userData.person) setPerson(this.player, profile.avatar);
     for (const p of parcels) this.city.setParcelState(p.id, p.building, p.rentLabel);
+    if (this.inside?.spec.units) this._refreshInterior();
     this.hud.render();
     this.sheets.refresh();
   }
@@ -604,7 +605,7 @@ export class WorldApp {
     const open = !p.hours || (t.hoursF >= p.hours[0] && t.hoursF < (p.hours[1] > 24 ? 24 : p.hours[1]));
     return {
       ...p, open, entrance: entrancePoint(p),
-      kindLabel: { cafe: 'Café', restaurant: 'Restaurant', market: 'Market', creator: 'Creator Hub', community: 'Signals community', education: 'Academy', ai: 'AI Studio', games: 'Arcade', transit: 'Transit hub', media: 'Cinema', store: 'Store', service: 'Service', tools: 'Free tools' }[p.kind] || p.kind,
+      kindLabel: { cafe: 'Café', restaurant: 'Restaurant', market: 'Market', creator: 'Creator Hub', community: 'Signals community', education: 'Academy', ai: 'AI Studio', games: 'Arcade', transit: 'Transit hub', media: 'Cinema', store: 'Store', service: 'Service', tools: 'Free tools', foodcourt: 'Food court', hotel: 'Hotel', conference: 'Conference center', cowork: 'Cowork space', supermarket: 'Supermarket', apartments: 'Apartments' }[p.kind] || p.kind,
       commerce: ['cafe', 'restaurant', 'store'].includes(p.kind),
       bookable: p.kind === 'service' && p.link.id !== 'lb_fixit_repair',
       rating: { biz_casa_nova: 4.7, biz_daily_grind: 4.7, biz_ember_grill: 4.6, biz_kicks_co: 4.8, biz_lumi_salon: 4.9, lb_fixit_repair: 4.1 }[p.link.id],
@@ -628,7 +629,7 @@ export class WorldApp {
     const pos = this.player.position;
     return {
       player: { x: pos.x, z: pos.z },
-      zoneName: zoneAt(pos.x, pos.z)?.name || 'Nova City',
+      zoneName: zoneAt(pos.x, pos.z)?.name || WORLD.name,
       focus: this.focus ? { type: this.focus.ref.type, id: this.focus.ref.id, name: this.focus.label, x: this.focus.x, z: this.focus.z } : null,
       places: PLACES.map((p) => this.placeView(p)),
       gigs: this.state.gigs.filter((g) => !g.mine && (g.status === undefined || g.status === 'open') && g.application?.status !== 'completed').map((g) => ({ ...g, ...this.gigPosition(g), missing: g.missing.map((m) => `${m.label} L${m.level}`), courseId: g.course?.id })),
@@ -715,13 +716,22 @@ export class WorldApp {
 
   // ───────────────────────── interiors ─────────────────────────
   interiorSpec(type, id) {
+    if (type === 'apt') {
+      // A private apartment: a furnished home layered on the tower's footprint.
+      const u = this.state.parcels.find((x) => x.id === id);
+      const v = u && PLACES.find((p) => p.id === u.venue);
+      if (!v) return null;
+      return { key: `apt:${id}`, type, id, kind: 'home', x: v.x, z: v.z, w: 20, d: 16, facing: v.facing, name: u.name.split(' · ')[0], accent: v.accent, parcelId: id, exitTo: { type: 'place', id: v.id } };
+    }
     if (type === 'place') {
       const p = PLACES.find((x) => x.id === id);
       const kind = interiorKindFor(p);
       if (!kind) return null;
-      return { key: `place:${id}`, type, id, kind, x: p.x, z: p.z, w: p.w, d: p.d, facing: p.facing, name: p.name, accent: p.accent, placeId: id, activity: p.activity, linkId: p.link?.id, place: p };
+      const units = this.state.parcels.filter((u) => u.venue === id).map((u) => ({ ...u, staff: RESIDENTS.find((r) => r.id === u.tenant?.id)?.person || null }));
+      return { units, key: `place:${id}`, type, id, kind, x: p.x, z: p.z, w: p.w, d: p.d, facing: p.facing, name: p.name, accent: p.accent, placeId: id, activity: p.activity, linkId: p.link?.id, place: p };
     }
     const p = this.state.parcels.find((x) => x.id === id) || PARCELS.find((x) => x.id === id);
+    if (p?.venue) return this.interiorSpec('place', p.venue);
     const b = p?.building;
     if (!b) return null;
     const [fx, fz] = facingVector(p.facing);
@@ -760,24 +770,40 @@ export class WorldApp {
   }
 
   async _menuFor(spec) {
-    if (!spec.linkId) return {};
     const extra = {};
+    if (spec.units?.length) {
+      extra.units = await Promise.all(spec.units.map(async (u) => {
+        if (!u.building?.businessName) return u;
+        const biz = await this.api.commerce.getBusiness(`pb_${u.id}`).catch(() => null);
+        return { ...u, catalog: biz?.catalog || [] };
+      }));
+    }
     try {
       if (['cafe', 'restaurant'].includes(spec.kind)) {
         const biz = await this.api.commerce.getBusiness(spec.linkId);
         extra.menu = (biz.catalog || []).slice(0, 7).map((c) => ({ name: c.name, price: `${this.state.wallet?.symbol || '$'}${c.price}` }));
       }
-      if (spec.kind === 'creator') extra.gigs = this.state.gigs.filter((g) => !g.mine && (!g.status || g.status === 'open')).slice(0, 6).map((g) => ({ title: g.title, budget: g.compensation?.amount ?? '' }));
+      if (spec.kind === 'cowork' || spec.kind === 'creator') extra.gigs = this.state.gigs.filter((g) => !g.mine && (!g.status || g.status === 'open')).slice(0, 6).map((g) => ({ title: g.title, budget: g.compensation?.amount ?? '' }));
       if (spec.kind === 'classroom') extra.courses = (this.state.courses || []).slice(0, 6).map((c) => ({ title: c.title, minutes: c.minutes || c.durationMin }));
-      if (spec.kind === 'cinema') extra.liveHandles = [...this.bots.values()].map((b) => b.handle).concat(['kemi', 'dev', 'ines']).slice(0, 6);
+      if (spec.kind === 'cinema' || spec.kind === 'conference') extra.liveHandles = [...this.bots.values()].map((b) => b.handle).concat(['kemi', 'dev', 'ines']).slice(0, 6);
     } catch {
       /* boards fall back to defaults */
     }
     return extra;
   }
 
+  _unitSig(spec) {
+    return (spec.units || []).map((u) => `${u.id}:${u.status}:${u.building?.businessName || ''}:${u.mine ? 1 : 0}`).join('|');
+  }
+
   async _ensureInterior(spec) {
-    if (this.interiors.has(spec.key)) return this.interiors.get(spec.key);
+    const sig = this._unitSig(spec);
+    const cached = this.interiors.get(spec.key);
+    if (cached && cached.sig === sig) return cached;
+    if (cached) {
+      this.scene.remove(cached.built.group);
+      this.interiors.delete(spec.key);
+    }
     const built = buildInterior({ ...spec, ...(await this._menuFor(spec)) });
     const g = built.group;
     g.position.set(spec.x, INTERIOR_Y, spec.z);
@@ -805,7 +831,7 @@ export class WorldApp {
       g.add(av);
       return av;
     });
-    const entry = { key: spec.key, spec, built, colliders, walls, obstacles, grid, staff };
+    const entry = { key: spec.key, spec, built, colliders, walls, obstacles, grid, staff, sig };
     this.interiors.set(spec.key, entry);
     return entry;
   }
@@ -817,15 +843,21 @@ export class WorldApp {
       case 'sheet':
         return this.sheets.open(action.view, action.props || {});
       case 'activity':
-        return this.sheets.activity(action.id, spec.type === 'parcel' && spec.kind === 'home' ? 'home' : spec.placeId || spec.id);
+        return this.sheets.activity(action.id, spec.kind === 'home' ? 'home' : spec.placeId || spec.id);
       case 'golive':
         return this.sheets.open('events', {});
+      case 'home':
+        return this.enterBuilding('apt', action.id);
+      case 'tour':
+        this.hud.toast('Showing you around — rent it from the concierge or the door', '🏢');
+        return this.enterBuilding('apt', action.id, true);
       default:
     }
   }
 
-  async enterBuilding(type, id) {
+  async enterBuilding(type, id, tour = false) {
     const spec = this.interiorSpec(type, id);
+    if (type === 'apt' && spec && !tour && !this.state.parcels.find((x) => x.id === id)?.mine) return this.hud.toast("That's someone else's home", '🚪');
     if (!spec) return type === 'place' ? this.enterPlace(id) : this.sheets.open('parcel', { id });
     if (this._doorBusy || this.inside?.key === spec.key) return;
     this._doorBusy = true;
@@ -862,6 +894,25 @@ export class WorldApp {
     }
   }
 
+  // Units inside a venue changed (someone rented a stall, opened a business):
+  // rebuild the room in place without moving the player.
+  async _refreshInterior() {
+    const cur = this.inside;
+    const spec = this.interiorSpec(cur.spec.type, cur.spec.id);
+    if (!spec || this._unitSig(spec) === cur.sig || this._rebuilding) return;
+    this._rebuilding = true;
+    try {
+      const entry = await this._ensureInterior(spec);
+      if (this.inside !== cur) return;
+      cur.built.group.visible = false;
+      entry.built.group.visible = true;
+      this.inside = entry;
+      this._focusKey = undefined;
+    } finally {
+      this._rebuilding = false;
+    }
+  }
+
   _leaveInterior() {
     const entry = this.inside;
     if (!entry) return;
@@ -880,6 +931,7 @@ export class WorldApp {
   exitBuilding() {
     const entry = this.inside;
     if (!entry || this._doorBusy) return;
+    if (entry.spec.exitTo) return this.enterBuilding(entry.spec.exitTo.type, entry.spec.exitTo.id);
     this._doorBusy = true;
     const spec = entry.spec;
     const [fx, fz] = facingVector(spec.facing);
@@ -907,7 +959,7 @@ export class WorldApp {
         this._doors.push({ type: 'place', id: p.id, x: p.x + fx * (p.d / 2), z: p.z + fz * (p.d / 2), fx, fz });
       }
       for (const p of this.state.parcels) {
-        if (!p.building) continue;
+        if (!p.building || p.venue) continue;
         const [fx, fz] = facingVector(p.facing);
         const bd = p.d - 8;
         this._doors.push({ type: 'parcel', id: p.id, x: p.x - fx * 2 + fx * (bd / 2), z: p.z - fz * 2 + fz * (bd / 2), fx, fz });
@@ -1370,7 +1422,7 @@ export class WorldApp {
         const e = entrancePoint(p);
         this._grid.upsert(`place:${p.id}`, e.x, e.z, { ref: { type: 'place', id: p.id }, label: p.name, r: PROX.interactRadius });
       }
-      for (const p of PARCELS) this._grid.upsert(`parcel:${p.id}`, p.x, p.z - p.d / 2 - 1, { ref: { type: 'parcel', id: p.id }, label: p.name, r: 8 });
+      for (const p of PARCELS.filter((x) => !x.venue)) this._grid.upsert(`parcel:${p.id}`, p.x, p.z - p.d / 2 - 1, { ref: { type: 'parcel', id: p.id }, label: p.name, r: 8 });
       if (this.flags.WORLD_ADS_ENABLED) for (const b of this.city.adSlots.filter((x) => !x.y)) this._grid.upsert(`bb:${b.id}`, b.x, b.z, { ref: { type: 'billboard', id: b.id }, label: 'Billboard', r: 9 });
       for (const a of AGENTS) this._grid.upsert(`agent:${a.id}`, a.x, a.z, { ref: { type: 'agent', id: a.id }, label: `${a.name} · ${a.role}`, r: 4.5 });
       this._grid.upsert('plaza', 0, 0, { ref: { type: 'plaza', id: PLAZA.id }, label: 'Central Plaza fountain', r: 8.5 });

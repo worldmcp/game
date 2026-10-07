@@ -89,7 +89,7 @@ test('every place entrance, agent, token and parcel is reachable', () => {
   const targets = [
     ...PLACES.map((p) => ({ id: p.id, ...entrancePoint(p) })),
     ...AGENTS, ...TOKENS,
-    ...PARCELS.map((p) => ({ id: p.id, x: p.x, z: p.z - p.d / 2 - 2 })),
+    ...PARCELS.filter((p) => !p.venue).map((p) => ({ id: p.id, x: p.x, z: p.z - p.d / 2 - 2 })),
   ];
   for (const t of targets) {
     const [i, j] = g.toCell(t.x, t.z);
@@ -99,12 +99,22 @@ test('every place entrance, agent, token and parcel is reachable', () => {
   for (const b of BILLBOARDS) assert.ok(Math.abs(b.x) <= DISTRICT.half && Math.abs(b.z) <= DISTRICT.half);
 });
 
+test('venue units (stalls, booths, desks, apartments) sit inside their venue', () => {
+  const units = PARCELS.filter((p) => p.venue);
+  assert.ok(units.length >= 20);
+  for (const u of units) {
+    const v = PLACES.find((p) => p.id === u.venue);
+    const f = footprint(v);
+    assert.ok(u.x > f.x0 && u.x < f.x1 && u.z > f.z0 && u.z < f.z1, `${u.id} is outside ${v.id}`);
+  }
+});
+
 test('footprints stay inside their city block', () => {
   const e = DISTRICT.edges;
   const ranges = [];
   for (let i = 0; i < e.length; i += 2) ranges.push([e[i], e[i + 1]]);
   const inside = (a0, a1) => ranges.some(([r0, r1]) => a0 >= r0 - 0.01 && a1 <= r1 + 0.01);
-  for (const p of [...PLACES, ...PARCELS]) {
+  for (const p of [...PLACES, ...PARCELS.filter((x) => !x.venue)]) {
     const f = footprint(p);
     assert.ok(inside(f.x0, f.x1) && inside(f.z0, f.z1), `${p.id} overlaps a road: ${JSON.stringify(f)}`);
   }

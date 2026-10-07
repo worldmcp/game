@@ -38,6 +38,7 @@ export const SERVICE_CATEGORIES = {
 
 function parcelFront(parcelId) {
   const p = PARCELS.find((x) => x.id === parcelId);
+  if (p?.venue) return { x: p.x, z: p.z }; // stall/booth inside a venue
   return p ? { x: p.x, z: p.z - p.d / 2 - 2 } : null;
 }
 

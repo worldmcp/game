@@ -9,6 +9,7 @@
 //    enforces permissions server-side.
 // In production the same context is sent to Pludor AI / MCP, which can call
 // real Pludor actions; this router stays as the offline/latency fallback.
+import { WORLD } from '../config/nova-city.js';
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9&' ]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -101,7 +102,7 @@ const HANDLERS = {
 
   describe(_text, ctx) {
     const f = describeFocusOrNearest(ctx);
-    if (!f) return { reply: `You're in ${ctx.zoneName || 'Nova City'}.`, results: [] };
+    if (!f) return { reply: `You're in ${ctx.zoneName || WORLD.name}.`, results: [] };
     if (f.type === 'place') {
       const p = ctx.places.find((x) => x.id === f.id);
       const gigs = ctx.gigs.filter((g) => g.placeId === p.id);
@@ -156,7 +157,7 @@ const HANDLERS = {
     const near = [...ctx.places].sort((a, b) => dist(a, ctx.player) - dist(b, ctx.player)).slice(0, 3);
     const gigs = ctx.gigs.filter((g) => g.eligible).length;
     const avail = ctx.parcels.filter((p) => p.status === 'available').length;
-    const reply = `You're in ${ctx.zoneName || 'Nova City'}. Nearby: ${near.map((p) => p.name).join(', ')}. ` +
+    const reply = `You're in ${ctx.zoneName || WORLD.name}. Nearby: ${near.map((p) => p.name).join(', ')}. ` +
       `${gigs} gig${gigs === 1 ? '' : 's'} you qualify for, ${avail} parcel${avail === 1 ? '' : 's'} for rent` +
       (ctx.liveEvents?.length ? `, and ${ctx.liveEvents[0].title} is on now.` : '.');
     return {

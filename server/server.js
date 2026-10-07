@@ -20,6 +20,12 @@ import { DemoPludorAdapter } from '../src/pludor/demo-adapter.js';
 import { CONTRACT, CLIENT_REPORTABLE_EVENTS } from '../src/pludor/contract.js';
 import { PLACES, PARCELS, entrancePoint, DISTRICT } from '../src/config/nova-city.js';
 import { EVENTS } from '../src/pludor/demo-data.js';
+import * as DEMO_DATA from '../src/pludor/demo-data.js';
+import { localizeWorld } from '../src/config/locale.js';
+import { WORLD } from '../src/config/nova-city.js';
+
+// One shared city per deployment, named for its country (WORLD_COUNTRY=NG → Neo Lagos).
+localizeWorld({ country: process.env.WORLD_COUNTRY || null, copy: [DEMO_DATA.QUESTS, DEMO_DATA.BOT_REPLIES, DEMO_DATA.EVENTS, DEMO_DATA.GIGS, DEMO_DATA.COURSES, DEMO_DATA.TRIVIA, DEMO_DATA.BUSINESSES, DEMO_DATA.COMMUNITIES, DEMO_DATA.RESIDENTS] });
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const STATIC_DIRS = ['src/', 'vendor/', 'assets/', 'styles/'];
@@ -160,7 +166,7 @@ export function createWorldServer({ dataDir = join(ROOT, '.data'), admins = [], 
   async function handleApi(req, res, url) {
     const ip = req.socket.remoteAddress;
     const path = url.pathname;
-    if (path === '/api/health') return send(res, 200, { ok: true, mode: 'sandbox', ts: Date.now() });
+    if (path === '/api/health') return send(res, 200, { ok: true, mode: 'sandbox', ts: Date.now(), world: { name: WORLD.name, country: WORLD.country || null } });
     if (path === '/api/stats') return send(res, 200, { online: hub.onlineCount() });
     if (path === '/api/auth/signup' || path === '/api/auth/login') {
       if (req.method !== 'POST') return send(res, 405, { code: 'method', message: 'POST only.' });

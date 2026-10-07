@@ -73,6 +73,28 @@ export const BUSINESSES = {
     ],
     affiliate: { commissionPct: 8 },
   },
+  biz_nova_grand: {
+    id: 'biz_nova_grand', name: 'Nova Grand Hotel', category: 'Hotel', ownerId: 'u_jay', claimed: true, verified: true,
+    rating: 4.8, reviewCount: 311, blurb: 'Skyline rooms, rooftop pool and a lobby full of local businesses.', fulfillment: [], reservations: true,
+    services: [
+      { id: 'svc-room', name: 'City Room · 1 night', price: 89, durationMin: 1440, icon: '🛏️' },
+      { id: 'svc-suite', name: 'Skyline Suite · 1 night', price: 189, durationMin: 1440, icon: '🌆' },
+      { id: 'svc-day', name: 'Day Pass · pool & gym', price: 25, durationMin: 480, icon: '🏊' },
+    ],
+  },
+  biz_freshmart: {
+    id: 'biz_freshmart', name: 'FreshMart Supermarket', category: 'Supermarket', ownerId: 'u_ayo', claimed: true, verified: true,
+    rating: 4.5, reviewCount: 189, blurb: 'Fresh produce, pantry staples and drinks — delivered by local couriers.', fulfillment: ['delivery', 'pickup'], prepMinutes: 5,
+    catalog: [
+      { sku: 'fm-avocado', name: 'Avocados (4)', price: 4.5, icon: '🥑', desc: 'Ripe and ready.', model: 'avocado' },
+      { sku: 'fm-water', name: 'Spring Water (6 pack)', price: 3, icon: '💧', desc: '6 × 500 ml.', model: 'bottle' },
+      { sku: 'fm-olives', name: 'Marinated Olives', price: 5, icon: '🫒', desc: 'Garlic and herbs.', model: 'olives' },
+      { sku: 'fm-rice', name: 'Long-grain Rice 5 kg', price: 9, icon: '🍚', desc: 'Pantry staple.' },
+      { sku: 'fm-eggs', name: 'Free-range Eggs (12)', price: 3.5, icon: '🥚', desc: 'Local farm.' },
+      { sku: 'fm-bread', name: 'Sourdough Loaf', price: 4, icon: '🍞', desc: 'Baked this morning.' },
+      { sku: 'fm-fruit', name: 'Fruit Box', price: 12, icon: '🍎', desc: 'Seasonal mix, 3 kg.' },
+    ],
+  },
   biz_lumi_salon: {
     id: 'biz_lumi_salon', name: 'Lumi Salon', category: 'Hair & Beauty', ownerId: 'u_lena', claimed: true, verified: true,
     rating: 4.9, reviewCount: 74, blurb: 'Braids, cuts, colour and nails.', fulfillment: [],

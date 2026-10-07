@@ -172,7 +172,7 @@ class LiveTile {
 export function interiorKindFor(place) {
   if (!place || place.walkable) return null;
   const byId = { 'kicks-co': 'shoes', 'casa-nova': 'furniture', 'lumi-salon': 'salon', 'fixit-repair': 'repair' };
-  return byId[place.id] || { cafe: 'cafe', restaurant: 'restaurant', store: 'shoes', service: 'repair', creator: 'creator', community: 'community', education: 'classroom', ai: 'ai', games: 'arcade', transit: 'transit', media: 'cinema' }[place.kind] || 'lounge';
+  return byId[place.id] || { cafe: 'cafe', restaurant: 'restaurant', store: 'shoes', service: 'repair', creator: 'creator', community: 'community', education: 'classroom', ai: 'ai', games: 'arcade', transit: 'transit', media: 'cinema', foodcourt: 'foodcourt', apartments: 'apartments', hotel: 'hotel', conference: 'conference', cowork: 'cowork', supermarket: 'supermarket' }[place.kind] || 'lounge';
 }
 
 // spec: { key, kind, w, d, name, accent, menu?: [[name, price]], owner?: string }
@@ -207,7 +207,7 @@ export function buildInterior(spec) {
   };
 
   // ── shell: floor, walls with a door gap at +z, ceiling, lights ──
-  const floorMat = ['cafe', 'restaurant', 'furniture', 'home', 'lounge', 'community', 'classroom'].includes(spec.kind)
+  const floorMat = ['cafe', 'restaurant', 'furniture', 'apartments', 'home', 'lounge', 'community', 'classroom', 'hotel', 'cowork'].includes(spec.kind)
     ? new THREE.MeshStandardMaterial({ map: woodFloor(W, D), roughness: 0.55 })
     : new THREE.MeshStandardMaterial({ map: (() => {
       const t = tileTexture(spec.kind === 'arcade' || spec.kind === 'cinema' ? '#2a2236' : '#b9bec4', spec.kind === 'arcade' || spec.kind === 'cinema' ? '#231c2e' : '#a7adb4', 8).clone();
@@ -217,7 +217,7 @@ export function buildInterior(spec) {
       return t;
     })(), roughness: 0.35 });
   add(box, floorMat, W, 0.2, D, 0, 0.1, 0);
-  const wallCol = { cafe: '#efe4d3', restaurant: '#5b2e2a', shoes: '#f2f2f0', furniture: '#ece6dc', salon: '#f7e9ef', repair: '#dfe5da', creator: '#262038', community: '#1f3b4a', classroom: '#eef2ee', ai: '#141a33', arcade: '#16101f', transit: '#e7eef0', cinema: '#140f18', home: '#efe7dc', shop: '#f2f0ec', lounge: '#e8e4ee' }[spec.kind] || '#eeeeee';
+  const wallCol = { apartments: '#e6e1d8', foodcourt: '#2b2238', hotel: '#e9dfcf', conference: '#121c2b', cowork: '#e7ece4', supermarket: '#f4f6f2', cafe: '#efe4d3', restaurant: '#5b2e2a', shoes: '#f2f2f0', furniture: '#ece6dc', salon: '#f7e9ef', repair: '#dfe5da', creator: '#262038', community: '#1f3b4a', classroom: '#eef2ee', ai: '#141a33', arcade: '#16101f', transit: '#e7eef0', cinema: '#140f18', home: '#efe7dc', shop: '#f2f0ec', lounge: '#e8e4ee' }[spec.kind] || '#eeeeee';
   const wallMat = M(wallCol, { rough: 0.9 });
   const T = 0.3;
   const door = 2.6;
@@ -344,6 +344,62 @@ export function buildInterior(spec) {
     const c = Math.abs(Math.sin(ry)) > 0.5;
     solid(x, z, c ? 0.45 : w / 2, c ? w / 2 : 0.45);
   };
+
+  // Rentable unit (stall / booth / desk) with its live state.
+  const unitBlock = (u) => {
+    const open = u.building?.businessName;
+    const label = open || (u.status === 'available' ? `FOR RENT · ${u.rentLabel}` : `${u.tenant?.displayName || 'Taken'}`);
+    const front = u.side === 'l' ? [1, 0] : u.side === 'r' ? [-1, 0] : [0, 1];
+    const ry = Math.atan2(front[0], front[1]);
+    const col = open ? accent : u.status === 'available' ? '#ffd166' : '#8892a6';
+    if (u.zoning === 'apartment') {
+      // Apartment door on the lobby wall with its number and status light.
+      add(box, M(u.mine ? '#2f6e5a' : '#6b5644', { rough: 0.5 }), 1.3, 2.4, 0.08, u.lx, 1.4, u.lz - 0.2);
+      add(sphere, M('#fff', { emissive: u.status === 'available' ? '#ffd166' : u.mine ? '#36d399' : '#ff5c5c', ei: 2 }), 0.06, 0.06, 0.06, u.lx + 0.45, 1.45, u.lz - 0.14);
+      const plate = add(plane, new THREE.MeshBasicMaterial({ map: boardTexture(u.name.split(' · ')[0], [[u.status === 'available' ? u.rentLabel : u.mine ? 'Your home' : 'Occupied', '']], { bg: '#1d2430', accent: col, w: 512, h: 256 }), toneMapped: false }), 1.2, 0.6, 1, u.lx, 3.05, u.lz - 0.14);
+      plate.receiveShadow = false;
+      const acts = u.mine
+        ? [{ id: 'home', icon: '🏠', label: 'Go home', action: { type: 'home', id: u.id } }, { id: 'manage', icon: '🔑', label: 'Lease', action: { type: 'sheet', view: 'parcel', props: { id: u.id } } }]
+        : u.status === 'available'
+          ? [{ id: 'rent', icon: '🔑', label: `Rent · ${u.rentLabel}`, action: { type: 'sheet', view: 'parcel', props: { id: u.id } } }, { id: 'tour', icon: '👀', label: 'Tour', action: { type: 'tour', id: u.id } }]
+          : [{ id: 'view', icon: '👀', label: 'View', action: { type: 'sheet', view: 'parcel', props: { id: u.id } } }];
+      spot(u.lx, u.lz + 1, u.name, u.status === 'available' ? `${u.aptSize} · ${u.rentLabel}` : u.mine ? 'Your apartment' : `Home of ${u.tenant?.displayName || 'a resident'}`, acts, 1.3);
+      return;
+    }
+    if (u.zoning === 'desk') {
+      add(box, M('#f2f2f2', { rough: 0.4 }), u.w, 0.05, u.d, u.lx, 0.95, u.lz);
+      add(box, M('#333', { metal: 0.5 }), u.w - 0.1, 0.72, 0.05, u.lx, 0.58, u.lz - u.d / 2 + 0.05);
+      solid(u.lx, u.lz, u.w / 2, u.d / 2);
+      screen(0.8, 0.45, u.lx, 1.32, u.lz - 0.25, 0, boardTexture(open ? open : u.status === 'available' ? 'FREE DESK' : 'IN USE', [[u.status === 'available' ? u.rentLabel : u.tenant?.displayName || '', '']], { accent: col, w: 512, h: 288 }));
+      sit(u.lx, u.lz + 0.75, Math.PI);
+    } else {
+      const along = front[0] === 0;
+      const cw = along ? u.w : u.d;
+      const cx = u.lx + front[0] * (u.side ? u.w / 2 - 0.5 : 0);
+      const cz = u.lz + front[1] * (u.side ? 0 : u.d / 2 - 0.5);
+      // Counter facing the room, back wall panel, and a lit header sign.
+      add(box, M(u.zoning === 'stall' ? '#3b2f2a' : '#2b3442', { rough: 0.6 }), along ? cw : 0.8, 1.05, along ? 0.8 : cw, cx, 0.72, cz);
+      add(box, M('#f4efe6', { rough: 0.3 }), along ? cw + 0.06 : 0.86, 0.05, along ? 0.86 : cw + 0.06, cx, 1.27, cz);
+      solid(cx, cz, along ? cw / 2 : 0.4, along ? 0.4 : cw / 2);
+      const sx = u.lx - front[0] * (u.side ? u.w / 2 - 0.1 : 0);
+      const sz = u.lz - front[1] * (u.side ? 0 : u.d / 2 - 0.1);
+      add(box, M(col, { rough: 0.5, emissive: col, ei: 0.15 }), along ? cw : 0.1, 2.6, along ? 0.1 : cw, sx, 1.5, sz);
+      const sign = add(plane, new THREE.MeshBasicMaterial({ map: boardTexture(label, [], { bg: '#111318', accent: col, w: 1024, h: 200 }), toneMapped: false }), Math.min(cw, 6), Math.min(cw, 6) * 0.195, 1, cx, 3.05, cz, ry);
+      sign.receiveShadow = false;
+      if (open && u.catalog?.length) screen(Math.min(cw * 0.55, 2.6), 1.1, sx + front[0] * 0.1, 1.95, sz + front[1] * 0.1, ry, boardTexture(open, u.catalog.slice(0, 5).map((c) => [c.name, `$${c.price}`]), { accent: col, w: 768, h: 384 }));
+      if (open && u.staff) person(sx + front[0] * 0.8, sz + front[1] * 0.8, ry, u.staff);
+    }
+    const fx = u.lx + front[0] * (u.zoning === 'desk' ? 0 : u.side ? u.w / 2 + 1.1 : 0);
+    const fz = u.lz + front[1] * (u.zoning === 'desk' ? u.d / 2 + 1 : u.side ? 0 : u.d / 2 + 1.1);
+    const acts = [];
+    if (open && !u.mine) acts.push({ id: 'order', icon: u.zoning === 'stall' ? '🍽️' : '📅', label: u.zoning === 'stall' ? 'Order' : 'Book', action: { type: 'sheet', view: 'pbiz', props: { parcelId: u.id } } });
+    if (u.mine) acts.push({ id: 'manage', icon: '🧾', label: 'Manage', action: { type: 'sheet', view: 'parcel', props: { id: u.id } } });
+    if (u.mine && u.zoning === 'desk') acts.push({ id: 'work', icon: '💻', label: 'Work a shift', action: { type: 'activity', id: 'workShift' } });
+    if (u.status === 'available') acts.push({ id: 'rent', icon: '🔑', label: `Rent · ${u.rentLabel}`, action: { type: 'sheet', view: 'parcel', props: { id: u.id } } });
+    if (!acts.length) acts.push({ id: 'view', icon: '👀', label: 'View', action: { type: 'sheet', view: 'parcel', props: { id: u.id } } });
+    spot(fx, fz, open || (u.status === 'available' ? `${u.name} — for rent` : u.name), open ? `${u.tenant?.displayName ? `by ${u.tenant.displayName}` : ''}` : u.status === 'available' ? `${u.rentLabel} · rent it for your business` : 'Rented', acts, u.zoning === 'desk' ? 1.2 : 1.8);
+  };
+  for (const u of spec.units || []) unitBlock(u);
 
   const menuItems = (spec.menu || []).map((m) => [m.name, m.price]);
   const order = (label = 'Order here', icon = '🛍️') => ({ id: 'order', icon, label, action: { type: 'sheet', view: 'place', props: { id: spec.placeId } } });
@@ -640,6 +696,143 @@ export function buildInterior(spec) {
       spot(0, zBack + 4.2, 'Main screen', 'Flika premieres and live concerts', [{ id: 'watch', icon: '🎬', label: 'Watch', action: { type: 'sheet', view: 'place', props: { id: spec.placeId } } }, { id: 'events', icon: '🎟️', label: 'Shows & tickets', action: { type: 'sheet', view: 'events', props: {} } }], 3.5);
       spot(-W / 2 + 1.6, zBack + 7, 'Live wall', 'Creators streaming right now', [{ id: 'live', icon: '🔴', label: 'Watch live', action: { type: 'sheet', view: 'place', props: { id: spec.placeId } } }, { id: 'golive', icon: '📹', label: 'Go live', action: { type: 'golive' } }], 2.6);
       spot(-W / 2 + 3, D / 2 - 2.5, 'Box office & snacks', 'Tickets, popcorn, merch', [{ id: 'tickets', icon: '🎟️', label: 'Tickets', action: { type: 'sheet', view: 'events', props: {} } }, { id: 'snack', icon: '🍿', label: 'Snack', action: { type: 'activity', id: 'snack' } }]);
+      break;
+    }
+    case 'apartments': {
+      counter(10, 4, 3.4, 0.8, '#3d4a5c', '#efe7da');
+      person(10, 3.1, 0, 'male_adult_19');
+      screen(4.2, 2, 10, 3, -11.6, 0, boardTexture('RESIDENTS', (spec.units || []).map((u) => [u.name, u.status === 'available' ? u.rentLabel : 'occupied']), { bg: '#1d2430', accent }));
+      spot(10, 5.2, 'Concierge', 'Lease an apartment · packages · visitors', [{ id: 'list', icon: '🏢', label: 'Available apartments', action: { type: 'sheet', view: 'place', props: { id: spec.placeId, tab: 'spots' } } }, { id: 'nia', icon: '🔑', label: 'Ask Nia (realtor)', action: { type: 'sheet', view: 'agent', props: { id: 'npc-nia' } } }], 2);
+      rug(-4, 3, 7, 4.5, '#4a5d74');
+      sofa(-6, 4.8, 2.6, Math.PI, '#d9c7a5');
+      sofa(-2, 4.8, 2.6, Math.PI, '#d9c7a5');
+      table(-4, 2.8, 0.55, '#2b2f36');
+      for (let k = 0; k < 12; k++) add(box, M('#b8a07a', { metal: 0.8, rough: 0.3 }), 0.4, 0.3, 0.05, 13 + (k % 4) * 0.45 - 0.7, 1.2 + Math.floor(k / 4) * 0.35, D / 2 - 0.1); // mailboxes
+      plant(W / 2 - 1, D / 2 - 1.5, 1.4);
+      plant(-W / 2 + 1, D / 2 - 1.5, 1.4);
+      for (let x = -12; x <= 12; x += 6) pendant(x, -6, '#fff1d0');
+      break;
+    }
+    case 'foodcourt': {
+      // Shared seating in the middle, self-serve kiosks by the door.
+      for (let i = 0; i < 4; i++)
+        for (let j = 0; j < 2; j++) {
+          const x = -7.5 + i * 5;
+          const z = -1.5 + j * 4;
+          table(x, z, 0.55, '#f2efe8');
+          for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+            sit(x + Math.sin(a) * 0.95, z + Math.cos(a) * 0.95, a + Math.PI, '#ff9f43');
+            post(x + Math.sin(a) * 0.95, z + Math.cos(a) * 0.95, 0.25);
+          }
+          pendant(x, z, '#ffd9a0');
+        }
+      for (const x of [-4, 4]) {
+        const z = D / 2 - 3.2;
+        add(box, M('#e9edf2', { rough: 0.3 }), 0.9, 1.7, 0.4, x, 1.05, z);
+        screen(0.7, 1.1, x, 1.35, z + 0.21, 0, boardTexture('ORDER', [['Tap to order', ''], ['All stalls', '']], { accent, w: 384, h: 600 }));
+        solid(x, z, 0.45, 0.2);
+        spot(x, z + 1, 'Self-serve kiosk', 'Order from any stall · pickup or delivery', [{ id: 'kiosk', icon: '🍜', label: 'Order food', action: { type: 'sheet', view: 'place', props: { id: spec.placeId, tab: 'order' } } }, { id: 'stalls', icon: '🔑', label: 'Rent a stall', action: { type: 'sheet', view: 'place', props: { id: spec.placeId, tab: 'spots' } } }], 1.6);
+      }
+      plant(W / 2 - 1, D / 2 - 1.3);
+      plant(-W / 2 + 1, D / 2 - 1.3);
+      break;
+    }
+    case 'hotel': {
+      counter(4, -8.5, 6, 0.9, '#5a4632', '#efe7da');
+      person(4, -9.6, 0, 'business_female_02');
+      add(box, M('#c9a15a', { metal: 0.8, rough: 0.3 }), 6.4, 0.6, 0.1, 4, 3, -11.6);
+      for (const x of [9, 12.5]) {
+        add(box, M('#b8a07a', { metal: 0.9, rough: 0.2 }), 2, 3, 0.1, x, 1.7, -11.6); // elevators
+        add(box, M('#fff', { emissive: '#ffd27a', ei: 1.5 }), 0.3, 0.1, 0.05, x, 3.4, -11.5);
+      }
+      spot(4, -7, 'Reception', 'Book a room, suite or day pass', [{ id: 'book', icon: '🛏️', label: 'Book a stay', action: { type: 'sheet', view: 'place', props: { id: spec.placeId, tab: 'book' } } }, { id: 'booths', icon: '🔑', label: 'Rent a booth', action: { type: 'sheet', view: 'place', props: { id: spec.placeId, tab: 'spots' } } }], 2.2);
+      rug(4, 1, 8, 5, '#7b2d26');
+      sofa(1.5, 2.5, 2.6, Math.PI, '#e9d8a6');
+      sofa(6.5, 2.5, 2.6, Math.PI, '#e9d8a6');
+      table(4, 0.5, 0.6, '#3a2a22');
+      product('vase', 0.6, 4, 0.98, 0.5);
+      // Chandelier.
+      for (let k = 0; k < 10; k++) {
+        const a = (k / 10) * Math.PI * 2;
+        add(sphere, M('#fff', { emissive: '#ffe2a8', ei: 2.5 }), 0.12, 0.12, 0.12, 4 + Math.cos(a) * 1.2, H - 1.4 - (k % 2) * 0.3, 0.5 + Math.sin(a) * 1.2);
+      }
+      plant(W / 2 - 1, D / 2 - 1.3, 1.5);
+      plant(W / 2 - 1, -4, 1.5);
+      spot(4, 4.2, 'Lobby lounge', 'Relax while you wait', [{ id: 'rest', icon: '🛋️', label: 'Relax', action: { type: 'activity', id: 'rest' } }], 2);
+      break;
+    }
+    case 'conference': {
+      const main = screenTexture();
+      out.reelScreen = main;
+      add(box, M('#1c2a3d', { rough: 0.7 }), 14, 0.7, 4, -2, 0.55, -9.5);
+      solid(-2, -9.5, 7, 2);
+      screen(12, 6, -2, H * 0.55, -11.6, 0, main);
+      add(box, M('#2b3442', { rough: 0.5 }), 1, 1.2, 0.6, -2, 1.5, -8.5); // lectern
+      person(-2, -9.1, 0, 'business_male_02');
+      out.liveTiles = [];
+      const handles = spec.liveHandles || ['maya', 'jay', 'lena', 'marcus', 'kemi', 'dev', 'ines', 'ayo'];
+      for (let k = 0; k < 8; k++) {
+        const tile = new LiveTile(handles[k % handles.length], 120 + k * 37, k * 45);
+        out.liveTiles.push(tile);
+        if (k < 4) screen(3.2, 1.8, -W / 2 + 0.07, 2.3 + (k % 2) * 2.2, -6 + Math.floor(k / 2) * 5, Math.PI / 2, tile.t);
+        else screen(3.2, 1.8, -12 + (k - 4) * 3.5 - (k > 5 ? 0 : 0), H - 1.4, -11.62, 0, tile.t);
+      }
+      out.tickers.push((t) => out.liveTiles.forEach((x) => x.update(t)));
+      for (let r = 0; r < 3; r++)
+        for (let x = -10; x <= 6; x += 1.2) {
+          const z = -3 + r * 2;
+          add(box, M('#2a4d6e', { rough: 0.8 }), 0.75, 0.12, 0.6, x, 0.55, z);
+          add(box, M('#2a4d6e', { rough: 0.8 }), 0.75, 0.7, 0.1, x, 0.9, z + 0.3);
+          if (x === -10 || x > 5.5) post(x, z, 0.4);
+        }
+      for (let r = 0; r < 3; r++) solid(-2, -3 + r * 2, 8.6, 0.4);
+      spot(-2, -6.5, 'Keynote stage', 'Live talks streamed to 12 screens', [{ id: 'events', icon: '🎤', label: 'Sessions', action: { type: 'sheet', view: 'events', props: {} } }, { id: 'golive', icon: '📹', label: 'Go live', action: { type: 'golive' } }], 3);
+      spot(-W / 2 + 1.6, -3.5, 'Live wall', 'Creators streaming right now', [{ id: 'watch', icon: '🔴', label: 'Watch live', action: { type: 'sheet', view: 'place', props: { id: spec.placeId, tab: 'live' } } }], 2.2);
+      spot(10, 7, 'Expo booths', 'Rent a booth to show your business', [{ id: 'booths', icon: '🔑', label: 'Rent a booth', action: { type: 'sheet', view: 'place', props: { id: spec.placeId, tab: 'spots' } } }], 2);
+      break;
+    }
+    case 'cowork': {
+      // UGC filming booth, meeting pod, gig board, coffee bar.
+      add(box, M('#20c060', { rough: 0.95 }), 4, 3.4, 0.05, -11, 1.9, -11.6);
+      add(box, M('#20c060', { rough: 0.95 }), 4, 0.02, 2.6, -11, 0.21, -10.3);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.035, 8, 32), M('#fff', { emissive: '#ffffff', ei: 3 }));
+      ring.position.set(-11, 1.7, -7.8);
+      g.add(ring);
+      post(-11, -7.8, 0.3);
+      spot(-11, -7, 'UGC booth', 'Film content for brand gigs', [{ id: 'ugc', icon: '🎬', label: 'UGC gigs', action: { type: 'sheet', view: 'work', props: {} } }], 2);
+      add(box, new THREE.MeshPhysicalMaterial({ color: '#cfe8f5', transparent: true, opacity: 0.25, roughness: 0.05 }), 5, 2.8, 0.06, 3, 1.6, -7.5);
+      add(box, new THREE.MeshPhysicalMaterial({ color: '#cfe8f5', transparent: true, opacity: 0.25, roughness: 0.05 }), 0.06, 2.8, 4, 0.5, 1.6, -9.5);
+      solid(3, -7.5, 2.5, 0.05);
+      solid(0.5, -9.5, 0.05, 2);
+      table(3, -9.6, 0.8, '#f2f2f2');
+      for (const a of [0.5, 2.6, 4.7]) sit(3 + Math.cos(a) * 1.3, -9.6 + Math.sin(a) * 1.3, -a - Math.PI / 2, '#c3e88d');
+      out.gigBoard = screen(4.5, 2.4, 11, 3, -11.6, 0, boardTexture('OPEN GIGS', (spec.gigs || []).map((x) => [x.title, `$${x.budget}`]), { accent }));
+      spot(11, -9.5, 'Gig board', 'Pick up work, hire freelancers', [{ id: 'gigs', icon: '💼', label: 'Find gigs', action: { type: 'sheet', view: 'work', props: {} } }, { id: 'hire', icon: '📌', label: 'Hire', action: { type: 'sheet', view: 'work', props: { tab: 'hire' } } }], 2.4);
+      counter(12, 8, 3.4, 0.8, '#3b4a3f', '#f2efe8');
+      person(12, 7.1, 0, 'female_adult_08');
+      spot(12, 9.2, 'Coffee bar', 'Members’ coffee', [{ id: 'snack', icon: '☕', label: 'Grab a coffee', action: { type: 'activity', id: 'snack' } }, { id: 'desks', icon: '🔑', label: 'Rent a desk', action: { type: 'sheet', view: 'place', props: { id: spec.placeId, tab: 'spots' } } }], 1.8);
+      for (let x = -9; x <= 9; x += 6) pendant(x, 3, '#fff1d0');
+      plant(-W / 2 + 1, D / 2 - 1.3);
+      break;
+    }
+    case 'supermarket': {
+      const goods = [['bottle', 0.3], ['avocado', 0.12], ['olives', 0.25], ['bottle', 0.3], ['vase', 0.3], ['lantern', 0.3]];
+      for (let k = 0; k < 4; k++) {
+        const x = -W / 2 + 4 + k * ((W - 8) / 3);
+        shelf(x - 0.35, -2, 8, Math.PI / 2, goods.map((g2, i) => goods[(i + k) % goods.length]));
+        shelf(x + 0.35, -2, 8, -Math.PI / 2, goods.map((g2, i) => goods[(i + k + 2) % goods.length]));
+        const sign = add(plane, new THREE.MeshBasicMaterial({ map: boardTexture(['FRESH', 'DRINKS', 'PANTRY', 'DELI'][k], [], { bg: '#1f3d2a', accent: '#7bd389', w: 512, h: 128 }), toneMapped: false, side: THREE.DoubleSide }), 2, 0.5, 1, x, 3.2, -2, Math.PI / 2);
+        sign.receiveShadow = false;
+      }
+      for (let k = 0; k < 3; k++) product('fridge', 2, -W / 2 + 5 + k * 2.2, 0.2, -D / 2 + 0.9);
+      solid(-W / 2 + 7.2, -D / 2 + 0.9, 3.4, 0.6);
+      for (let k = 0; k < 3; k++) {
+        const x = 2 + k * 3;
+        counter(x, D / 2 - 4, 1.2, 2, '#2f5d3a', '#e9ecef');
+        if (k < 2) person(x + 0.9, D / 2 - 4, -Math.PI / 2, k ? 'female_adult_03' : 'male_adult_01');
+      }
+      spot(5, D / 2 - 2.2, 'Checkout', 'Pay or arrange delivery', [order('Shop groceries', '🛒'), { id: 'deliver', icon: '🛵', label: 'Courier jobs', action: { type: 'sheet', view: 'work', props: { tab: 'deliveries' } } }], 2.2);
+      spot(-W / 2 + 4, 2.5, 'Aisles', 'Fresh produce and pantry staples', [order('Browse products', '🥑')], 3);
       break;
     }
     case 'home': {

@@ -128,6 +128,10 @@ export const ECONOMY = {
       storefront: { label: 'Storefront', icon: '🏪', buildCost: 0, height: 9 },
       studio: { label: 'Creator Studio', icon: '🎬', buildCost: 0, height: 11 },
       home: { label: 'Home', icon: '🏠', buildCost: 0, height: 7 },
+      stall: { label: 'Food stall', icon: '🍜', buildCost: 0, unit: true },
+      booth: { label: 'Business booth', icon: '🛎️', buildCost: 0, unit: true },
+      desk: { label: 'Cowork desk', icon: '💻', buildCost: 0, unit: true },
+      apartment: { label: 'Apartment', icon: '🏢', buildCost: 0, unit: true },
     },
   },
 

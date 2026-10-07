@@ -8,6 +8,7 @@ import { facadeTextures, facadePBR, asphaltPBR, paversPBR, grassPBR, leafCardTex
 import { productInstance } from './assets.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { addPalms, addTerrace, FountainSpray, createAirship, createLandmarkTower, createSkyline, LedScreen } from './props.js';
+import { createOuterCity } from './outer-city.js';
 
 // Inner roads are pedestrianised inside this half-size around the plaza.
 const PROMENADE = 30;
@@ -115,7 +116,7 @@ export class City {
       this.tower.position.set(0, 0, -430);
       this.tower.scale.setScalar(1.35);
       this.root.add(this.tower);
-      this.skyline = createSkyline(5, { avoid: [[0, -430, 70]] });
+      this.skyline = createSkyline(5, { inner: 345, outer: 560, avoid: [[0, -430, 70]] });
       this.root.add(this.skyline);
       this.airship = createAirship();
       this.airship.userData.dynamic = true;
@@ -123,6 +124,13 @@ export class City {
       this.root.add(this.airship);
     } else this._skyline();
     this._river();
+    // The city keeps going past the playable district.
+    const exits = [];
+    for (const c of DISTRICT.roads) exits.push({ x: c, z: -DISTRICT.half - 3, ry: 0 }, { x: -DISTRICT.half - 3, z: c, ry: Math.PI / 2 }, { x: DISTRICT.half + 3, z: c, ry: Math.PI / 2 });
+    const outer = createOuterCity({ half: DISTRICT.half, quality: this.quality, exits });
+    this.root.add(outer.group);
+    this.windowMats.push(...outer.windowMats);
+    this.nightMats.push(...outer.nightMats);
   }
 
   // ───────── ground, roads, blocks ─────────
@@ -1109,7 +1117,7 @@ export class City {
     const q = new THREE.Quaternion();
     for (let k = 0; k < n; k++) {
       const a = (k / n) * Math.PI * 2 + r() * 0.04;
-      const dist = 190 + r() * 120;
+      const dist = 345 + r() * 150;
       const w = 12 + r() * 22;
       const h = 20 + r() ** 2 * 120;
       q.setFromEuler(new THREE.Euler(0, a, 0));

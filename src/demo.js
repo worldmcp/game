@@ -14,6 +14,8 @@ import { ECONOMY } from './config/economy.js';
 import { worldTimeAt } from './core/world-time.js';
 import { mountPludorWorld, DemoPludorAdapter, HttpPludorAdapter, browserStorage, LocalPresenceTransport, resolveGuestIdentity, resolveFlags } from './index.js';
 import { WsPresenceTransport } from './net/ws-transport.js';
+import { localizeWorld, detectCountry } from './config/locale.js';
+import * as DEMO_DATA from './pludor/demo-data.js';
 
 const params = new URLSearchParams(location.search);
 const flags = resolveFlags(location.search);
@@ -56,11 +58,27 @@ function fatal(msg) {
   el.innerHTML = `<div class="pw-root"><div class="pw-loading"><div class="pw-loading-box"><div class="pw-logo">P</div><h1>PLUDOR <span>WORLD</span></h1><small>${msg}</small></div></div></div>`;
 }
 
+// The city is named after the main city of the player's country (or of the
+// deployment, when the server pins WORLD_COUNTRY so everyone shares one city).
+let serverCountry = null;
+function localize() {
+  let saved = null;
+  try {
+    saved = localStorage.getItem('pw-country');
+  } catch {
+    /* storage blocked */
+  }
+  const country = serverCountry || detectCountry({ override: params.get('country') || saved });
+  localizeWorld({ country, copy: [DEMO_DATA.QUESTS, DEMO_DATA.BOT_REPLIES, DEMO_DATA.EVENTS, DEMO_DATA.GIGS, DEMO_DATA.COURSES, DEMO_DATA.TRIVIA, DEMO_DATA.BUSINESSES, DEMO_DATA.COMMUNITIES, DEMO_DATA.RESIDENTS].filter(Boolean) });
+}
+
 async function serverMode() {
   if (params.has('offline')) return false;
   try {
     const r = await fetch('/api/health', { cache: 'no-store' });
-    return r.ok && (await r.json()).ok === true;
+    const j = r.ok ? await r.json() : null;
+    if (j?.world?.country) serverCountry = j.world.country;
+    return j?.ok === true;
   } catch {
     return false;
   }
@@ -189,7 +207,9 @@ if (!webglOk()) fatal('Your browser needs WebGL to enter the world.');
 else {
   (async () => {
     try {
-      if (await serverMode()) await bootOnline();
+      const online = await serverMode();
+      localize();
+      if (online) await bootOnline();
       else await bootOffline();
     } catch (err) {
       console.error(err);

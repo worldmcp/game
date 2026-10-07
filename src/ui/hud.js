@@ -4,14 +4,14 @@
 
 import * as THREE from 'three';
 import { html, esc, money, raw, PRESENCE_COLORS } from './dom.js';
-import { PLACES, PARCELS, AGENTS, DISTRICT, PLAZA, footprint, entrancePoint, zoneAt } from '../config/nova-city.js';
+import { PLACES, PARCELS, AGENTS, WORLD, DISTRICT, PLAZA, footprint, entrancePoint, zoneAt } from '../config/nova-city.js';
 import { ECONOMY } from '../config/economy.js';
 import { formatClock } from '../core/world-time.js';
 import { currentStep } from '../core/quests.js';
 import { EV } from '../core/events.js';
 
 const KIND_COLORS = { cafe: '#ffcf8a', restaurant: '#ff7a59', market: '#ffd166', creator: '#b794ff', community: '#5ce1e6', education: '#7ee8a2', ai: '#8b7dff', games: '#ff5ce1', transit: '#36d399', media: '#ff4d6d', store: '#ffb703', service: '#ff9ecf', tools: '#4cc9f0' };
-const KIND_ICON = { cafe: '☕', restaurant: '🍽️', market: '🛒', creator: '🎬', community: '📡', education: '🎓', ai: '🤖', games: '🎮', transit: '🚆', media: '🎞️', store: '👟', service: '✂️', tools: '🧰' };
+const KIND_ICON = { cafe: '☕', restaurant: '🍽️', market: '🛒', creator: '🎬', community: '📡', education: '🎓', ai: '🤖', games: '🎮', transit: '🚆', media: '🎞️', store: '👟', service: '✂️', tools: '🧰', foodcourt: '🍜', hotel: '🏨', conference: '🎤', cowork: '💻', supermarket: '🛒', apartments: '🏢' };
 
 export class Hud {
   constructor(root, app) {
@@ -43,7 +43,7 @@ export class Hud {
     </header>
     <aside class="pw-minimap"><canvas width="360" height="360" title="Open map (M)"></canvas><span class="pw-north">N</span>
       <div class="pw-map-btns"><button data-hud="recenter" title="Recenter">◎</button><button data-hud="zoom" data-arg="1" title="Zoom in">+</button><button data-hud="zoom" data-arg="-1" title="Zoom out">−</button></div>
-      <div class="pw-zone"><b>Nova City</b><small class="pw-zone-name">Central Plaza</small></div></aside>
+      <div class="pw-zone"><b>${WORLD.name}</b><small class="pw-zone-name">Central Plaza</small></div></aside>
     <section class="pw-player">
       <div class="pw-player-head"><span class="pw-av lg me"></span><div class="pw-player-id"><div class="pw-name">--</div><div class="pw-rank">Visitor</div>
         <div class="pw-xprow"><i class="pw-xpfill"><b></b></i><small class="pw-xptext">0 XP</small></div></div></div>
@@ -566,6 +566,7 @@ export class Hud {
       g.globalAlpha = 1;
     }
     for (const p of PARCELS) {
+      if (p.venue) continue;
       g.strokeStyle = '#ffd166';
       g.setLineDash([4, 3]);
       g.strokeRect(X(p.x - p.w / 2), Z(p.z - p.d / 2), p.w * k, p.d * k);
@@ -682,7 +683,7 @@ export class Hud {
     const el = this.q('.pw-biz');
     let best = null;
     for (const p of PLACES) {
-      if (!['cafe', 'restaurant', 'store', 'service', 'market'].includes(p.kind)) continue;
+      if (!['cafe', 'restaurant', 'store', 'service', 'market', 'foodcourt', 'hotel', 'supermarket', 'apartments', 'cowork'].includes(p.kind)) continue;
       const e = entrancePoint(p);
       const d = Math.hypot(e.x - pp.x, e.z - pp.z);
       if (d < 55 && (!best || d < best.d)) best = { p, d };
@@ -743,6 +744,12 @@ export class Hud {
       place(el, p.x, (app.inside ? app.floorY : 0) + 2.7, p.z, 45);
     }
     if (app.inside) {
+      for (const u of app.state.parcels) {
+        if (u.venue !== app.inside.spec.id || u.status !== 'available') continue;
+        const el = this._plate(`l:${u.id}`, 'land', html`<span>🔑</span>${u.rentLabel}`.s);
+        el.onclick = () => app.sheets.open('parcel', { id: u.id });
+        place(el, u.x, app.floorY + 3.6, u.z, 30);
+      }
       for (const [id, el] of this.plates) {
         if (!el._seen) {
           el.remove();
@@ -779,7 +786,7 @@ export class Hud {
     }
     // For-rent markers.
     for (const p of app.state.parcels) {
-      if (p.status !== 'available') continue;
+      if (p.status !== 'available' || p.venue) continue;
       const el = this._plate(`l:${p.id}`, 'land', html`<span>🏷️</span>${p.rentLabel}`.s);
       el.onclick = () => app.sheets.open('parcel', { id: p.id });
       place(el, p.x, 4.6, p.z + p.d / 2 - 1.5, 55);

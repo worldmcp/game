@@ -7,7 +7,7 @@
 // file with a client for the existing Pludor APIs (see contract.js).
 
 import { ECONOMY } from '../config/economy.js';
-import { PARCELS, PLACES, TOKENS } from '../config/nova-city.js';
+import { PARCELS, PLACES, TOKENS, UNIT_SEEDS, WORLD } from '../config/nova-city.js';
 import * as D from './demo-data.js';
 import { CLIENT_REPORTABLE_EVENTS, PludorError } from './contract.js';
 import { awardXp, checkAchievements, levelForXp, nextRank, rankFor } from '../core/progression.js';
@@ -27,6 +27,10 @@ const ZONING_TEMPLATES = {
   commercial: ['storefront', 'studio'],
   'mixed-use': ['storefront', 'studio', 'home'],
   premium: ['storefront', 'studio', 'home'],
+  stall: ['stall'],
+  booth: ['booth'],
+  desk: ['desk'],
+  apartment: ['apartment'],
 };
 
 export function memoryStorage() {
@@ -144,7 +148,14 @@ export class DemoPludorAdapter {
   }
 
   _world() {
-    return this.store.get('pludor-demo:world') || { parcels: {}, postedGigs: [], claims: {}, feedback: {}, adStats: {}, reports: [] };
+    const w = this.store.get('pludor-demo:world') || { parcels: {}, postedGigs: [], claims: {}, feedback: {}, adStats: {}, reports: [] };
+    // Demo residents trading in venue units (food court, booths) from day one.
+    if (!w.unitsSeeded) {
+      w.unitsSeeded = 1;
+      for (const [id, seed] of Object.entries(UNIT_SEEDS)) if (!w.parcels[id]) w.parcels[id] = { ...seed, catalog: seed.catalog.map((c) => ({ ...c })), rentedAt: 0 };
+      this.store.set('pludor-demo:world', w);
+    }
+    return w;
   }
 
   _mutateWorld(fn) {
@@ -444,8 +455,8 @@ export class DemoPludorAdapter {
           const last = st.cooldowns[activityId] || 0;
           if (A.now() - last < 20000) throw new PludorError('cooldown', 'You just did that — try again in a moment.');
           if (activityId === 'sleep') {
-            const home = Object.values(A._world().parcels).find((p) => p.tenantId === A.me.id && p.template === 'home');
-            if (!home && ctx.placeId !== 'home') throw new PludorError('no_home', 'Rent a home parcel to sleep there.');
+            const home = Object.values(A._world().parcels).find((p) => p.tenantId === A.me.id && (p.template === 'home' || p.template === 'apartment'));
+            if (!home && ctx.placeId !== 'home') throw new PludorError('no_home', 'Rent a home or an apartment to sleep there.');
           }
           st.cooldowns[activityId] = A.now();
           st.needs = applyNeedEffects(st.needs, act.effects, A.now(), A.eco.needs, A.eco.time);
@@ -1041,7 +1052,9 @@ export class DemoPludorAdapter {
         if (!A.eco.land.templates[templateId]) throw new PludorError('invalid_template', 'Pick a building template.');
         if (!ZONING_TEMPLATES[parcel.zoning].includes(templateId)) throw new PludorError('zoning', `${parcel.zoning} zoning doesn't allow a ${A.eco.land.templates[templateId].label}.`);
         const w = A._world();
-        if (Object.values(w.parcels).filter((x) => x.tenantId === A.me.id).length >= 2) throw new PludorError('limit', 'You can rent up to 2 parcels in this district.');
+        const isUnit = !!parcel.venue;
+        const mineOfKind = Object.entries(w.parcels).filter(([id, x]) => x.tenantId === A.me.id && !!PARCELS.find((q) => q.id === id)?.venue === isUnit).length;
+        if (mineOfKind >= (isUnit ? 3 : 2)) throw new PludorError('limit', isUnit ? 'You can rent up to 3 units (stalls, booths, desks, apartments).' : 'You can rent up to 2 parcels in this district.');
         const tenantName = A._load().profile.displayName;
         // Reserve first, then charge; roll the reservation back if payment fails.
         A._mutateWorld((ww) => {
@@ -1074,7 +1087,7 @@ export class DemoPludorAdapter {
         A._mutateWorld((w) => {
           const p = w.parcels[parcelId];
           if (!p || p.tenantId !== A.me.id) throw new PludorError('forbidden', "You don't rent this parcel.");
-          if (p.template === 'home') throw new PludorError('zoning', 'Homes cannot host a storefront.');
+          if (p.template === 'home' || p.template === 'apartment') throw new PludorError('zoning', 'Homes cannot host a storefront.');
           p.businessName = clean;
           p.category = category;
           p.catalog ||= [];
@@ -1302,7 +1315,7 @@ export class DemoPludorAdapter {
         switch (agent) {
           case 'guide': {
             const qs = D.QUESTS.filter((q) => st.quests[q.id]?.active && !st.quests[q.id]?.done);
-            return { reply: qs.length ? `Welcome to Nova City! Your active quests: ${qs.map((q) => q.title).join(', ')}. Everything here is connected to real Pludor — shops take real orders, gigs pay real money.` : "You've finished every quest I have. Try hosting something!", quests: qs.map((q) => q.id) };
+            return { reply: qs.length ? `Welcome to ${WORLD.name}! Your active quests: ${qs.map((q) => q.title).join(', ')}. Everything here is connected to real Pludor — shops take real orders, gigs pay real money.` : "You've finished every quest I have. Try hosting something!", quests: qs.map((q) => q.id) };
           }
           case 'realtor': {
             const parcels = (await A.land.listParcels()).filter((p) => p.status === 'available').sort((a, b) => a.rentPerWeek - b.rentPerWeek);

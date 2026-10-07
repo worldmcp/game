@@ -3,8 +3,9 @@
 // renders from adapter data and every action goes back through the adapter.
 
 import { html, raw, esc, money, timeAgo, PRESENCE_COLORS } from './dom.js';
-import { PLACES, PARCELS, AGENTS, BILLBOARDS, entrancePoint, PLAZA } from '../config/nova-city.js';
+import { PLACES, PARCELS, AGENTS, WORLD, BILLBOARDS, entrancePoint, PLAZA } from '../config/nova-city.js';
 import { ECONOMY } from '../config/economy.js';
+import { CITY_BY_COUNTRY } from '../config/locale.js';
 import { RESIDENTS, SKILLS } from '../pludor/demo-data.js';
 import { PEOPLE } from '../config/assets.js';
 import { SERVICE_CATEGORIES } from '../pludor/economy-chain.js';
@@ -305,6 +306,57 @@ VIEWS.place = {
 
 const PLACE_KINDS = {};
 
+// Units inside a venue: stalls, booths, desks — rent one or buy from it.
+function renderUnits(app, units) {
+  const tpl = ECONOMY.land.templates;
+  return html`<div class="pw-list">${units.map((u) => {
+    const b = u.building;
+    const icon = tpl[u.allowedTemplates[0]]?.icon || '🔑';
+    const state = u.status === 'available' ? html`<em class="pw-pay">${u.rentLabel}</em>` : b?.businessName ? html`<small>${b.businessName} · by ${u.tenant?.displayName}</small>` : html`<small>Rented by ${u.tenant?.displayName}</small>`;
+    const act = u.status === 'available'
+      ? btn('Rent', 'view', { view: 'parcel', props: { id: u.id } }, 'sm')
+      : u.mine ? btn('Manage', 'view', { view: 'parcel', props: { id: u.id } }, 'sm ghost')
+        : b?.businessName ? btn(u.zoning === 'stall' ? 'Order' : 'Book', 'view', { view: 'pbiz', props: { parcelId: u.id } }, 'sm') : '';
+    return html`<div class="pw-card pw-row-card"><span class="pw-ico">${icon}</span><div class="pw-grow"><b>${u.name}</b>${state}</div>${act}</div>`;
+  })}</div>`;
+}
+
+// Venues: food court, conference centre, cowork — buildings whose spots
+// are rented by businesses and freelancers.
+PLACE_KINDS.venue = {
+  async render(app, props, s, p) {
+    const units = app.state.parcels.filter((u) => u.venue === p.id);
+    const open = units.filter((u) => u.building?.businessName);
+    const list = [];
+    if (p.kind === 'foodcourt') list.push(['order', 'Order food']);
+    if (p.kind === 'conference') list.push(['live', 'Live now']);
+    if (p.kind === 'cowork') list.push(['gigs', 'Gigs']);
+    list.push(['spots', { foodcourt: 'Stalls', conference: 'Expo booths', cowork: 'Desks', apartments: 'Apartments' }[p.kind] || 'Spots']);
+    props.tab ||= list[0][0];
+    let body;
+    if (props.tab === 'order') {
+      const menus = await Promise.all(open.map((u) => app.api.commerce.getBusiness(`pb_${u.id}`).catch(() => null)));
+      body = open.length ? html`<div class="pw-list">${open.map((u, i) => html`<div class="pw-card pw-row-card"><span class="pw-ico">🍽️</span><div class="pw-grow"><b>${u.building.businessName}</b><small>${(menus[i]?.catalog || []).slice(0, 3).map((c) => `${c.icon} ${c.name}`).join(' · ')}</small></div>${btn('Order', 'view', { view: 'pbiz', props: { parcelId: u.id } }, 'sm')}</div>`)}</div>
+        <p class="pw-muted">Pick up at the stall or get it delivered by a courier.</p>` : empty('No stalls are open yet — rent one and be the first!');
+    } else if (props.tab === 'live') {
+      const live = app.state.events.filter((e) => e.live);
+      body = html`${live.length ? html`<div class="pw-list">${live.map((e) => html`<div class="pw-card pw-row-card"><span class="pw-live-dot"></span><div class="pw-grow"><b>${e.title}</b><small>${e.hostName || ''}</small></div>${btn('Watch', 'view', { view: 'events', props: { highlight: e.id } }, 'sm')}</div>`)}</div>` : empty('No sessions live right now.')}
+        <div class="pw-note">📹 Going live from the World (camera + mic over Pludor's own WebRTC) is the next release. Live sessions here are streamed to every screen in the building.</div>`;
+    } else if (props.tab === 'gigs') {
+      const gigs = app.state.gigs.filter((g) => !g.mine && (!g.status || g.status === 'open')).slice(0, 8);
+      body = gigs.length ? html`<div class="pw-list">${gigs.map((g) => gigCard(app, g))}</div>` : empty('No open gigs right now.');
+    } else body = renderUnits(app, units);
+    return html`${placeHeader(app, p, html`<div class="pw-hero-acts">${activityBtn(p)}</div>`)}
+      <p class="pw-blurb">${{ foodcourt: 'Food businesses rent stalls here, hang their sign and take orders from the self-serve kiosks — pickup or courier delivery.', conference: 'Keynotes, expos and live streams on twelve screens. Businesses rent expo booths.', cowork: 'Hot desks, a UGC filming booth and the gig board — rent a desk and work your gigs.', apartments: 'Studios to penthouses with skyline views. Rent one to sleep, freshen up and host friends — paid weekly from your Pludor Wallet.' }[p.kind] || ''}</p>
+      ${tabs(props, list)}${body}`;
+  },
+  actions: { tab: tabAction },
+};
+PLACE_KINDS.foodcourt = PLACE_KINDS.venue;
+PLACE_KINDS.conference = PLACE_KINDS.venue;
+PLACE_KINDS.cowork = PLACE_KINDS.venue;
+PLACE_KINDS.apartments = PLACE_KINDS.venue;
+
 // Businesses: café, restaurant, store, service (+ unclaimed local data).
 PLACE_KINDS.business = {
   async render(app, props, s, p) {
@@ -318,9 +370,12 @@ PLACE_KINDS.business = {
     if (hasCatalog && app.flags.WORLD_COMMERCE_ENABLED) tabList.push(['shop', biz.category === 'Restaurant' ? 'Menu' : 'Shop']);
     if (hasServices && app.flags.WORLD_COMMERCE_ENABLED) tabList.push(['book', biz.reservations ? 'Reserve' : 'Book']);
     if (app.flags.WORLD_GIGS_ENABLED) tabList.push(['gigs', `Gigs${gigs.length ? ` (${gigs.length})` : ''}`]);
+    const units = app.state.parcels.filter((u) => u.venue === p.id);
+    if (units.length) tabList.push(['spots', 'Booths']);
     tabList.push(['about', 'About']);
     let body;
-    if (props.tab === 'shop') body = renderShop(app, props, biz);
+    if (props.tab === 'spots') body = renderUnits(app, units);
+    else if (props.tab === 'shop') body = renderShop(app, props, biz);
     else if (props.tab === 'book') body = renderBook(app, props, biz);
     else if (props.tab === 'gigs') body = gigs.length ? html`<div class="pw-list">${gigs.map((g) => gigCard(app, g))}</div>` : empty('No open gigs here right now.');
     else body = renderAbout(app, props, biz, p);
@@ -630,7 +685,7 @@ PLACE_KINDS.transit = {
   async render(app, props, s, p) {
     const dests = [{ id: 'central-plaza', name: 'Central Plaza' }, ...PLACES.filter((x) => x.id !== p.id)];
     return html`${placeHeader(app, p)}
-      <h4>Ride in Nova City</h4><p class="pw-muted">Free in-world transit. Arrive instantly.</p>
+      <h4>Ride in ${WORLD.name}</h4><p class="pw-muted">Free in-world transit. Arrive instantly.</p>
       <div class="pw-chips">${dests.map((d) => html`<button class="pw-chip-btn" ${A('ride', d.id)}>${KIND_ICON[d.kind] || '⛲'} ${d.name}</button>`)}</div>
       <h4>Real-world Wayfare</h4>
       <div class="pw-grid3">
@@ -788,8 +843,8 @@ VIEWS.parcel = {
     const info = html`<div class="pw-kv"><div><span>Zoning</span><b>${p.zoning}</b></div><div><span>Size</span><b>${p.w} × ${p.d} m</b></div><div><span>Rent</span><b>${p.rentLabel}</b></div><div><span>Purchase</span><b>${$m(p.price)} · when available</b></div></div>`;
     if (p.status === 'available') {
       props.template ||= p.allowedTemplates[0];
-      return html`<div class="pw-place-hero" style="--accent:#ffd166"><div class="pw-place-icon">🏗️</div><div><div class="pw-place-kind">Available parcel</div><div class="pw-place-meta">Riverside Lots · Central</div></div></div>${info}
-        <h4>Choose a building</h4><div class="pw-grid3">${Object.entries(tpls).map(([id, t]) => {
+      return html`<div class="pw-place-hero" style="--accent:#ffd166"><div class="pw-place-icon">${p.venue ? tpls[p.allowedTemplates[0]].icon : '🏗️'}</div><div><div class="pw-place-kind">${p.venue ? `Available ${tpls[p.allowedTemplates[0]].label.toLowerCase()}` : 'Available parcel'}</div><div class="pw-place-meta">${p.venueName || 'Riverside Lots'} · Central</div></div></div>${info}
+        <h4>${p.venue ? 'Your spot' : 'Choose a building'}</h4><div class="pw-grid3">${Object.entries(tpls).filter(([id, t]) => (p.venue ? p.allowedTemplates.includes(id) : !t.unit)).map(([id, t]) => {
           const ok = p.allowedTemplates.includes(id);
           return html`<button class="pw-tile ${props.template === id ? 'on' : ''} ${ok ? '' : 'off'}" ${ok ? A('tpl', id) : raw('disabled')}><span>${t.icon}</span>${t.label}${ok ? '' : html`<small>not zoned</small>`}</button>`;
         })}</div>
@@ -802,12 +857,12 @@ VIEWS.parcel = {
     }
     const b = p.building;
     return html`<div class="pw-place-hero" style="--accent:#36d399"><div class="pw-place-icon">${tpls[b.template].icon}</div><div><div class="pw-place-kind">Your ${tpls[b.template].label}</div><div class="pw-place-meta">${b.businessName || 'Not open yet'}</div></div></div>${info}
-      ${b.template === 'home'
-        ? html`<div class="pw-row">${btn('😴 Sleep', 'activity', { id: 'sleep', placeId: 'home' })}${btn('🚿 Freshen up', 'activity', { id: 'shower', placeId: 'home' }, 'ghost')}</div>`
+      ${b.template === 'home' || b.template === 'apartment'
+        ? html`<div class="pw-row">${b.template === 'apartment' ? btn('🏠 Go home', 'gohome', p.id) : ''}${btn('😴 Sleep', 'activity', { id: 'sleep', placeId: 'home' })}${btn('🚿 Freshen up', 'activity', { id: 'shower', placeId: 'home' }, 'ghost')}</div>`
         : b.businessName
           ? await storeManager(app, p)
           : html`<form class="pw-form" data-form="open"><h4>Open your business</h4><input name="name" required minlength="2" maxlength="22" placeholder="Business name">
-            <select name="category"><option value="restaurant">🍽️ Restaurant / food</option><option value="shop" selected>🛍️ Shop</option><option value="service">🧰 Services</option></select>
+            <select name="category"><option value="restaurant" ${b.template === 'stall' ? 'selected' : ''}>🍽️ Restaurant / food</option><option value="shop" ${b.template === 'stall' || b.template === 'booth' || b.template === 'desk' ? '' : 'selected'}>🛍️ Shop</option><option value="service" ${b.template === 'booth' || b.template === 'desk' ? 'selected' : ''}>🧰 Services / bookings</option></select>
             <button class="pw-btn">Open for business</button></form>`}
       <h4>Grow it</h4><div class="pw-grid3">
         <button class="pw-tile" ${A('view', { view: 'post-gig', props: { prefill: { parcelId: p.id, title: 'Build my storefront', category: 'virtual-construction', amount: 40 } } })}><span>🔨</span>Hire a builder</button>
@@ -818,6 +873,11 @@ VIEWS.parcel = {
         <button class="pw-tile" ${A('link', { key: 'live.event', params: { eventId: 'new' } })}><span>🎉</span>Host an event</button></div>`;
   },
   actions: {
+    gohome(app, props, id, s) {
+      s.close?.();
+      app.sheets.close();
+      app.enterBuilding('apt', id);
+    },
     async rmProduct(app, props, sku, s) {
       await app.api.business.removeProduct(props.id, sku);
       s.render(true);
@@ -1185,7 +1245,7 @@ VIEWS.trivia = {
 VIEWS.plaza = {
   title: 'Central Plaza',
   render(app) {
-    return html`<p class="pw-blurb">The heart of Nova City. Meet people, catch live events and get your bearings.</p>
+    return html`<p class="pw-blurb">The heart of ${WORLD.name}. Meet people, catch live events and get your bearings.</p>
       <div class="pw-row">${btn('🪙 Toss a coin', 'activity', { id: 'fountain', placeId: 'central-plaza' })}${btn('🪑 Rest', 'activity', { id: 'rest', placeId: 'central-plaza' }, 'ghost')}</div>
       ${eventStrip(app, 'central-plaza')}<h4>Talk to Pip</h4>${btn('🧭 Ask the City Guide', 'view', { view: 'agent', props: { id: 'npc-pip' } }, 'ghost')}`;
   },
@@ -1193,7 +1253,7 @@ VIEWS.plaza = {
 
 // LISTS FROM THE DOCK ───────────────────────────────────────
 VIEWS.map = {
-  title: 'Nova City · Central',
+  title: () => `${WORLD.name} · Central`,
   root: true,
   render(app) {
     const groups = {};
@@ -1302,7 +1362,7 @@ VIEWS.events = {
   root: true,
   render(app, props) {
     const evs = app.state.events;
-    return html`<p class="pw-muted">Times are Nova City world time.</p><div class="pw-list">${evs.map((e) => {
+    return html`<p class="pw-muted">Times are ${WORLD.name} world time.</p><div class="pw-list">${evs.map((e) => {
       const p = placeById(e.placeId);
       const target = p ? goArg(p) : { x: 0, z: 12, label: 'Central Plaza' };
       return html`<div class="pw-event ${e.live ? 'live' : ''} ${props.highlight === e.id ? 'hl' : ''}"><div><b>${e.live ? html`<span class="pw-live-dot"></span>` : ''}${e.title}</b><small>${e.placeName} · ${e.live ? 'Live now' : `starts in ${Math.max(1, Math.round(e.startsInHours))}h`} · ${e.ticket ? `ticket ${$m(e.ticket.price)}` : 'free'}</small></div>
@@ -1458,6 +1518,7 @@ VIEWS.settings = {
       <h4>Status</h4><select class="pw-select" data-change="presence">${PRESENCE.map((p) => html`<option ${u.presence === p ? raw('selected') : ''}>${p}</option>`)}</select>
       <p class="pw-muted">“Invisible” hides you from other players and from Nearby.</p>
       <h4>Privacy</h4><div class="pw-grid2"><label class="pw-mini">Who can message me<select class="pw-select" data-change="allowMessages">${['everyone', 'friends', 'nobody'].map((o) => html`<option ${u.allowMessages === o ? raw('selected') : ''}>${o}</option>`)}</select></label><label class="pw-mini">Who can voice call me<select class="pw-select" data-change="allowCalls">${['everyone', 'friends', 'nobody'].map((o) => html`<option ${u.allowCalls === o ? raw('selected') : ''}>${o}</option>`)}</select></label></div>
+      ${app.mode === 'offline' ? html`<h4>Your city</h4><select class="pw-select" data-change="country"><option value="">Auto (${WORLD.name})</option>${Object.entries(CITY_BY_COUNTRY).sort((x, y) => x[1].localeCompare(y[1])).map(([c, n]) => html`<option value="${c}" ${WORLD.country === c ? raw('selected') : ''}>${n} · ${c}</option>`)}</select><p class="pw-muted">The world is a futuristic take on your country's main city. On a live server the city is set for everyone.</p>` : ''}
       <h4>Graphics</h4><div class="pw-seg">${['high', 'medium', 'low'].map((q) => html`<button class="${app.quality === q ? 'on' : ''}" ${A('quality', q)}>${q[0].toUpperCase() + q.slice(1)}</button>`)}</div>
       <p class="pw-muted">Low uses simple figures and no shadows — best for older phones.</p>
       <h4>Controls</h4><p class="pw-muted">WASD / arrows to move · Shift to run · drag to look · scroll to zoom · E to interact · M map · / Pludor AI. On phones: joystick + tap to walk.</p>
@@ -1481,7 +1542,18 @@ VIEWS.settings = {
     },
     logout: (app) => app.logout?.(),
   },
-  changes: VIEWS.profile.changes,
+  changes: {
+    ...VIEWS.profile.changes,
+    country(app, props, c) {
+      try {
+        if (c) localStorage.setItem('pw-country', c);
+        else localStorage.removeItem('pw-country');
+      } catch {
+        /* storage blocked */
+      }
+      location.reload();
+    },
+  },
 };
 
 // INVENTORY ────────────────────────────────────────────────

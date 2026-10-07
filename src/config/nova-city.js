@@ -123,6 +123,45 @@ export const PLACES = [
     link: { type: 'business', id: 'biz_casa_nova' },
     display: [{ model: 'sofa', size: 2.2, spin: false }, { model: 'chair', size: 1, spin: false }, { model: 'pouf', size: 0.7, spin: false }],
   },
+  // ── Venue high-rises: businesses rent spots inside (see UNITS below) ──
+  {
+    id: 'food-court', name: 'Skyline Food Court', kind: 'foodcourt', template: 'tower',
+    x: -50, z: -95, w: 34, d: 24, h: 46, facing: 's', color: '#3a2f4d', accent: '#ff9f43',
+    tags: ['food', 'food court', 'eat', 'lunch', 'dinner', 'stall', 'kiosk', 'hungry', 'suya', 'snack'], hours: [8, 24],
+    link: { type: 'venue', id: 'food-court' }, activity: 'snack',
+  },
+  {
+    id: 'summit-center', name: 'Summit Conference Center', kind: 'conference', template: 'hall',
+    x: 0, z: -95, w: 36, d: 24, h: 22, facing: 's', color: '#1f3a5a', accent: '#4cc9f0',
+    tags: ['conference', 'expo', 'live', 'stream', 'keynote', 'booth', 'event', 'summit', 'talk'],
+    link: { type: 'venue', id: 'summit-center' },
+    led: [{ lines: ['LIVE', 'ON 12', 'SCREENS'], tag: 'Pludor Summit', bg: ['#0f2027', '#2c5364'] }],
+  },
+  {
+    id: 'grand-hotel', name: 'Nova Grand Hotel', kind: 'hotel', template: 'tower',
+    x: 50, z: -95, w: 34, d: 24, h: 64, facing: 's', color: '#2d3b4f', accent: '#e9c46a',
+    tags: ['hotel', 'stay', 'room', 'suite', 'booking', 'booth', 'travel', 'sleep', 'night'],
+    link: { type: 'business', id: 'biz_nova_grand' }, activity: 'rest',
+  },
+  {
+    id: 'hive-cowork', name: 'Hive Cowork', kind: 'cowork', template: 'hall',
+    x: -95, z: 50, w: 34, d: 24, h: 16, facing: 'e', color: '#3b4a3f', accent: '#c3e88d',
+    tags: ['cowork', 'desk', 'office', 'gigs', 'ugc', 'freelance', 'work', 'studio', 'meeting'],
+    link: { type: 'venue', id: 'hive-cowork' }, activity: 'workShift',
+  },
+  {
+    id: 'fresh-mart', name: 'FreshMart Supermarket', kind: 'supermarket', template: 'storefront',
+    x: -95, z: 95, w: 26, d: 24, h: 10, facing: 'e', color: '#2f5d3a', accent: '#7bd389',
+    tags: ['supermarket', 'groceries', 'grocery', 'food', 'shop', 'buy', 'essentials', 'drinks', 'fruit'], hours: [7, 23],
+    link: { type: 'business', id: 'biz_freshmart' },
+    display: [{ model: 'avocado', size: 0.3 }, { model: 'bottle', size: 0.4 }, { model: 'olives', size: 0.35 }],
+  },
+  {
+    id: 'nova-heights', name: 'Nova Heights Apartments', kind: 'apartments', template: 'tower',
+    x: -95, z: -50, w: 34, d: 24, h: 72, facing: 'e', color: '#3d4a5c', accent: '#9bdcff',
+    tags: ['apartment', 'apartments', 'flat', 'home', 'rent', 'live', 'residence', 'sleep', 'housing'],
+    link: { type: 'venue', id: 'nova-heights' }, activity: 'rest',
+  },
   {
     id: 'tool-district', name: 'Tool District', kind: 'tools', template: 'kiosks',
     x: 95, z: 50, w: 36, d: 26, h: 4, facing: 'w', color: '#28323f', accent: '#4cc9f0',
@@ -172,8 +211,7 @@ export const TOKENS = [
 
 // Cells without a hand-placed landmark get procedurally generated buildings.
 export const FILLER_CELLS = [
-  [-2, -2], [-1, -2], [0, -2], [1, -2], [2, -2],
-  [-2, -1], [-2, 1], [-2, 2],
+  [-2, -2], [2, -2],
 ];
 
 export const DISTRICT_ZONES = [
@@ -211,3 +249,55 @@ export function entrancePoint(place, gap = 2.6) {
   // Local depth always runs along the facing axis.
   return { x: place.x + fx * (place.d / 2 + gap), z: place.z + fz * (place.d / 2 + gap) };
 }
+
+// ───────── rentable units inside venues ─────────
+// Units are parcels that live inside a venue (food-court stalls, hotel and
+// expo booths, cowork desks). They reuse the land → business → orders →
+// courier chain; their x/z is the spot inside the building, which the
+// interior shares with the city, so pickups are position-verified as usual.
+// lx/lz are local to the venue: x across the façade, z depth, door at +z.
+const UNIT_DEFS = [
+  ...[-12, -4, 4, 12].map((lx, i) => ({ id: `u-fc-${i + 1}`, venue: 'food-court', name: `Food Court Stall ${i + 1}`, lx, lz: -9, w: 7, d: 3, zoning: 'stall', rentPerWeek: 12, price: 400 })),
+  ...[-5, 3].map((lz, i) => ({ id: `u-fc-${i + 5}`, venue: 'food-court', name: `Food Court Stall ${i + 5}`, lx: -14.8, lz, w: 3, d: 6, zoning: 'stall', rentPerWeek: 10, price: 350, side: 'l' })),
+  ...[-6, -1.5, 3].map((lz, i) => ({ id: `u-hb-${i + 1}`, venue: 'grand-hotel', name: `Lobby Booth ${i + 1}`, lx: -14.8, lz, w: 3, d: 3.6, zoning: 'booth', rentPerWeek: 10, price: 350, side: 'l' })),
+  ...[-6, -1.5, 3].map((lz, i) => ({ id: `u-cc-${i + 1}`, venue: 'summit-center', name: `Expo Booth ${i + 1}`, lx: 15.8, lz, w: 3, d: 3.6, zoning: 'booth', rentPerWeek: 14, price: 450, side: 'r' })),
+  // Apartment doors line the lobby's back wall; each opens onto a private home.
+  ...[['Studio', 18], ['1-bed', 24], ['1-bed', 24], ['2-bed', 32], ['Studio', 18], ['1-bed', 24], ['2-bed', 32], ['Penthouse', 60]].map(([size, rent], i) => ({ id: `u-apt-${i + 1}`, venue: 'nova-heights', name: `Apt ${Math.floor(i / 2) + 2}0${(i % 2) + 1} · ${size}`, lx: -12.6 + i * 3.6, lz: -10.9, w: 2.4, d: 0.6, zoning: 'apartment', rentPerWeek: rent, price: rent * 30, aptSize: size })),
+  ...[[-9, 1], [-3, 1], [3, 1], [9, 1], [-9, 5.5], [-3, 5.5]].map(([lx, lz], i) => ({ id: `u-cw-${i + 1}`, venue: 'hive-cowork', name: `Hot Desk ${i + 1}`, lx, lz, w: 2, d: 1.2, zoning: 'desk', rentPerWeek: 6, price: 200 })),
+];
+
+const ROT = { s: 0, n: Math.PI, e: Math.PI / 2, w: -Math.PI / 2 };
+export const UNITS = UNIT_DEFS.map((u) => {
+  const v = PLACES.find((p) => p.id === u.venue);
+  const th = ROT[v.facing];
+  return { ...u, venueName: v.name, facing: v.facing, x: v.x + u.lx * Math.cos(th) + u.lz * Math.sin(th), z: v.z - u.lx * Math.sin(th) + u.lz * Math.cos(th) };
+});
+PARCELS.push(...UNITS);
+
+// Demo residents already trading in some units, so venues feel alive.
+export const UNIT_SEEDS = {
+  'u-fc-1': { tenantId: 'u_marcus', tenantName: 'Marcus', template: 'stall', businessName: 'Suya Spot', category: 'restaurant', catalog: [
+    { sku: 'ss-beef', name: 'Beef Suya', price: 7, icon: '🍢', desc: 'Spicy yaji, onions, tomato.' },
+    { sku: 'ss-chicken', name: 'Chicken Suya', price: 6.5, icon: '🍗', desc: 'Grilled over open flame.' },
+    { sku: 'ss-jollof', name: 'Smoky Jollof Bowl', price: 8, icon: '🍛', desc: 'Party-style, with plantain.' },
+    { sku: 'ss-zobo', name: 'Zobo Drink', price: 2.5, icon: '🍹', desc: 'Hibiscus, ginger, pineapple.' },
+  ] },
+  'u-fc-2': { tenantId: 'u_lena', tenantName: 'Lena', template: 'stall', businessName: 'Crêpe Corner', category: 'restaurant', catalog: [
+    { sku: 'cc-choc', name: 'Chocolate Crêpe', price: 5.5, icon: '🥞', desc: 'Hazelnut chocolate, banana.' },
+    { sku: 'cc-ham', name: 'Ham & Cheese Crêpe', price: 6.5, icon: '🧀', desc: 'Buckwheat galette.' },
+    { sku: 'cc-tea', name: 'Iced Tea', price: 2.5, icon: '🧋', desc: 'Peach, lightly sweet.' },
+  ] },
+  'u-fc-3': { tenantId: 'u_kemi', tenantName: 'Kemi', template: 'stall', businessName: 'Bao Bar', category: 'restaurant', catalog: [
+    { sku: 'bb-pork', name: 'Pork Belly Bao', price: 6, icon: '🥟', desc: 'Pickles, hoisin, peanuts.' },
+    { sku: 'bb-veg', name: 'Crispy Tofu Bao', price: 5.5, icon: '🥬', desc: 'Sriracha mayo.' },
+    { sku: 'bb-boba', name: 'Bubble Tea', price: 4, icon: '🧋', desc: 'Brown sugar milk tea.' },
+  ] },
+  'u-hb-1': { tenantId: 'u_jay', tenantName: 'Jay', template: 'booth', businessName: 'Jay City Tours', category: 'service', catalog: [
+    { sku: 'jt-tour', name: 'City Tour (2 h)', price: 25, icon: '🗺️', desc: 'Guided tour of the city highlights.' },
+    { sku: 'jt-airport', name: 'Airport Transfer', price: 30, icon: '🚐', desc: 'Door to terminal.' },
+  ] },
+  'u-cc-1': { tenantId: 'u_maya', tenantName: 'Maya', template: 'booth', businessName: 'Maya Studio', category: 'service', catalog: [
+    { sku: 'ms-head', name: 'Headshot Session', price: 30, icon: '📸', desc: '15 minutes, 5 edited photos.' },
+    { sku: 'ms-product', name: 'Product Shoot', price: 45, icon: '📦', desc: 'Up to 6 products, white background.' },
+  ] },
+};
