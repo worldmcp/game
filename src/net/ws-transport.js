@@ -74,7 +74,7 @@ export class WsPresenceTransport {
           this.peerMap.set(p.id, {
             id: p.id, handle: pr.handle || 'player', displayName: pr.displayName || 'Player', color: pr.color || '#888888',
             skin: '#c68642', presence: pr.presence || 'Online', roles: pr.roles || [], bio: pr.bio || '', avatar: pr.avatar || null,
-            x: p.x, z: p.z, ry: p.ry, moving: p.moving, emote: p.emote, seen: Date.now(),
+            x: p.x, z: p.z, ry: p.ry, moving: p.moving, emote: p.emote, inside: p.inside || null, seen: Date.now(),
           });
         }
         for (const id of [...this.peerMap.keys()]) {
@@ -104,7 +104,7 @@ export class WsPresenceTransport {
   }
 
   publishState(state) {
-    this._send({ type: 'state', x: state.x, z: state.z, ry: state.ry, moving: state.moving, emote: state.emote });
+    this._send({ type: 'state', x: state.x, z: state.z, ry: state.ry, moving: state.moving, emote: state.emote, inside: state.inside || null });
   }
 
   send(msg) {

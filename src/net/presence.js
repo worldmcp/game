@@ -49,6 +49,7 @@ export class LocalPresenceTransport {
         ry: Number(msg.ry) || 0,
         moving: !!msg.moving,
         emote: msg.emote ? String(msg.emote).slice(0, 12) : null,
+        inside: typeof msg.inside === 'string' && /^[a-z0-9:_-]{1,48}$/.test(msg.inside) ? msg.inside : null,
         seen: Date.now(),
       });
       if (isNew) this._peersChanged();

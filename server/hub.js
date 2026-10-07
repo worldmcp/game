@@ -154,6 +154,8 @@ export class Hub {
     p.ry = Number.isFinite(Number(msg.ry)) ? Number(msg.ry) : p.ry;
     p.moving = !!msg.moving;
     p.emote = EMOTES.has(msg.emote) ? msg.emote : null;
+    // Which building interior the player is in (interiors share the world's x/z).
+    p.inside = typeof msg.inside === 'string' && /^[a-z0-9:_-]{1,48}$/.test(msg.inside) ? msg.inside : null;
     p.last = now;
     this.grid.upsert(id, x, z);
   }
@@ -186,7 +188,7 @@ export class Hub {
       const me = this.players.get(id);
       if (!me) continue;
       const vis = this.visibleTo(id, me.x, me.z);
-      const states = vis.map((p) => ({ id: p.id, x: +p.x.toFixed(2), z: +p.z.toFixed(2), ry: +p.ry.toFixed(2), moving: p.moving, emote: p.emote, profile: p.profile }));
+      const states = vis.map((p) => ({ id: p.id, x: +p.x.toFixed(2), z: +p.z.toFixed(2), ry: +p.ry.toFixed(2), moving: p.moving, emote: p.emote, inside: p.inside || null, profile: p.profile }));
       for (const ws of sockets) this._send(ws, { type: 'states', players: states, online: this.onlineCount() });
     }
   }

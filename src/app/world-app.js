@@ -7,15 +7,18 @@ import * as THREE from 'three';
 import { City } from '../render/city.js';
 import { createAvatar, animateAvatar, initHumans, recolorAvatar, setPerson, pickPerson, portraitOf } from '../render/avatar.js';
 import { Environment, PostFX } from '../render/environment.js';
-import { loadModel, fitObject } from '../render/assets.js';
+import { loadModel, fitObject, assetErrors } from '../render/assets.js';
 import { PLACES, PARCELS, BILLBOARDS, AGENTS, TOKENS, PLAZA, DISTRICT, FILLER_CELLS, WORLD, cellBounds, entrancePoint, footprint, zoneAt, facingVector } from '../config/nova-city.js';
 import { ECONOMY } from '../config/economy.js';
 import { TOOLS, RESIDENTS } from '../pludor/demo-data.js';
 import { SpatialGrid } from '../core/spatial-grid.js';
 import { NavGrid } from '../core/pathfind.js';
+import { Obstacles, separate, steer } from '../core/obstacles.js';
 import { worldTimeAt } from '../core/world-time.js';
 import { EV } from '../core/events.js';
 import { Hud } from '../ui/hud.js';
+import { honk, chime } from '../render/audio.js';
+import { buildInterior, interiorKindFor, INTERIOR_Y, drawCinemaFrame } from '../render/interiors.js';
 import { Sheets } from '../ui/sheets.js';
 
 const PROX = ECONOMY.proximity;
@@ -51,6 +54,9 @@ export class WorldApp {
     this.peers = new Map();
     this.bots = new Map();
     this.sitting = false;
+    this.inside = null; // { key, spec, built, ... } while in a building interior
+    this.interiors = new Map();
+    this.floorY = 0.2;
   }
 
   async start(onProgress = () => {}) {
@@ -65,12 +71,19 @@ export class WorldApp {
     onProgress(0.4, `Building ${WORLD.name}`);
     await frame();
     this.city = new City(this.scene, { quality: this.quality, places: PLACES, parcels: PARCELS, billboards: this.flags.WORLD_ADS_ENABLED ? BILLBOARDS : [], plaza: PLAZA, filler: FILLER_CELLS, tools: TOOLS, agents: AGENTS });
+    this.obstacles = new Obstacles(4);
+    for (const [x, z, r] of this.city.obstacles) this.obstacles.add(x, z, r);
+    this.crowd = [];
     this.city.onCollidersChanged = () => this._rebuildNav();
     this._rebuildNav();
     onProgress(0.6, 'Loading your Pludor identity');
     await frame();
     this.hud = new Hud(this.root, this);
     this.sheets = new Sheets(this.hud.sheetEl, this);
+    if (assetErrors.length) {
+      console.warn('Asset errors', assetErrors);
+      setTimeout(() => this.hud.toast(`Some 3D models couldn't load (${assetErrors.length}). Showing simplified figures.`, '⚠️'), 1500);
+    }
     this._initPlayer();
     this._initAgents();
     this._initAmbient();
@@ -137,6 +150,7 @@ export class WorldApp {
   _rebuildNav() {
     this.navGrid = new NavGrid({ half: DISTRICT.half + 6, cell: 2, blockers: this.city.colliders.filter((c) => !c.round && c.x1 - c.x0 < 400), pad: 0.8 });
     this.navGrid.block(-6, 6, -6, 6);
+    for (const o of this.obstacles?.list || []) if (o.r >= 0.35) this.navGrid.block(o.x, o.x, o.z, o.z);
   }
 
   _initPlayer() {
@@ -269,6 +283,7 @@ export class WorldApp {
       let ring = [[-r, -r], [r, -r], [r, r], [-r, r]];
       if (!cw) ring = ring.reverse();
       let g;
+      let brake = null;
       if (this.carTemplate) {
         g = this.carTemplate.clone(true);
         const paint = new THREE.Color(carCols[k % carCols.length]);
@@ -278,7 +293,10 @@ export class WorldApp {
             o.material = o.material.clone();
             o.material.color.copy(paint);
           }
-          if (/headlight|brakelight/i.test(o.material.name)) this.carLights.add(o.material);
+          if (/brakelight/i.test(o.material.name)) {
+            brake ||= o.material.clone();
+            o.material = brake;
+          } else if (/headlight/i.test(o.material.name)) this.carLights.add(o.material);
         });
       } else {
         g = new THREE.Group();
@@ -301,7 +319,16 @@ export class WorldApp {
       }
       g.traverse((c) => c.isMesh && (c.castShadow = true));
       this.scene.add(g);
-      this.cars.push({ g, ring, seg: k % 4, t: (k * 0.29) % 1, speed: 7 + (k % 3) * 2 });
+      if (!brake) {
+        brake = new THREE.MeshStandardMaterial({ color: '#400', emissive: '#ff1a1a', emissiveIntensity: 0.3 });
+        for (const x of [-0.6, 0.6]) {
+          const l = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.18, 0.08), brake);
+          l.position.set(x, 0.85, -2.12);
+          g.add(l);
+        }
+      }
+      if (brake.emissive) brake.emissive.set('#ff1a1a');
+      this.cars.push({ g, ring, seg: k % 4, t: (k * 0.29) % 1, speed: 7 + (k % 3) * 2, brake, honkAt: 0, blockedFor: 0 });
     }
   }
 
@@ -395,6 +422,7 @@ export class WorldApp {
       while (o && !o.userData.ref && !o.userData.personRef) o = o.parent;
       if (!o) continue;
       if (o.userData.personRef) return this.openRef(o.userData.personRef);
+      if (o.userData.ref.type === 'place' && this.interiorSpec('place', o.userData.ref.id)) return this.visitPlace(o.userData.ref.id);
       return this.openRef(o.userData.ref);
     }
     const pt = new THREE.Vector3();
@@ -429,7 +457,7 @@ export class WorldApp {
     const prof = this.state.profile || {};
     this.transport.publishState({
       profile: { handle: prof.handle, displayName: prof.displayName, color: prof.color, skin: this.me.skin, presence: prof.presence, roles: prof.roles, bio: prof.bio, avatar: this.player.userData.person },
-      x: +p.x.toFixed(2), z: +p.z.toFixed(2), ry: +this.player.rotation.y.toFixed(2), moving: this.speed > 0.1, emote: this.emote,
+      x: +p.x.toFixed(2), z: +p.z.toFixed(2), ry: +this.player.rotation.y.toFixed(2), moving: this.speed > 0.1, emote: this.emote, inside: this.inside?.key || null,
     });
   }
 
@@ -554,10 +582,18 @@ export class WorldApp {
 
   people() {
     const out = [];
+    const here = this.inside?.key || null;
+    if (here) {
+      for (const [id] of this.peers) {
+        const p = this.transport.getPeer(id);
+        if (p && (p.inside || null) === here) out.push({ id, name: p.handle, displayName: p.displayName, presence: p.presence, color: p.color, x: p.x, z: p.z });
+      }
+      return out;
+    }
     for (const b of this.bots.values()) out.push({ id: b.id, name: b.handle, displayName: b.displayName, presence: b.presence, color: b.color, x: b.avatar.position.x, z: b.avatar.position.z, bot: true });
     for (const [id] of this.peers) {
       const p = this.transport.getPeer(id);
-      if (p) out.push({ id, name: p.handle, displayName: p.displayName, presence: p.presence, color: p.color, x: p.x, z: p.z });
+      if (p && !p.inside) out.push({ id, name: p.handle, displayName: p.displayName, presence: p.presence, color: p.color, x: p.x, z: p.z });
     }
     return out;
   }
@@ -634,6 +670,7 @@ export class WorldApp {
   async teleport(placeId) {
     const p = PLACES.find((x) => x.id === placeId);
     const dest = p ? entrancePoint(p, 3.5) : DISTRICT.spawn;
+    if (this.inside) this._leaveInterior();
     this.hud.fade(async () => {
       this.player.position.set(dest.x, 0.2, dest.z);
       this.cam.target.copy(this.player.position);
@@ -662,6 +699,8 @@ export class WorldApp {
         return this.sheets.open('course', { id: ref.id });
       case 'event':
         return this.sheets.open('events', { highlight: ref.id });
+      case 'spot':
+        return this.focus?.acts?.[0]?.run();
       default:
     }
   }
@@ -674,10 +713,238 @@ export class WorldApp {
     this.sheets.open('place', { id });
   }
 
+  // ───────────────────────── interiors ─────────────────────────
+  interiorSpec(type, id) {
+    if (type === 'place') {
+      const p = PLACES.find((x) => x.id === id);
+      const kind = interiorKindFor(p);
+      if (!kind) return null;
+      return { key: `place:${id}`, type, id, kind, x: p.x, z: p.z, w: p.w, d: p.d, facing: p.facing, name: p.name, accent: p.accent, placeId: id, activity: p.activity, linkId: p.link?.id, place: p };
+    }
+    const p = this.state.parcels.find((x) => x.id === id) || PARCELS.find((x) => x.id === id);
+    const b = p?.building;
+    if (!b) return null;
+    const [fx, fz] = facingVector(p.facing);
+    const label = b.businessName || (b.template === 'home' ? `${b.tenantName}'s Home` : `${b.tenantName}'s ${b.template === 'studio' ? 'Studio' : 'Shop'}`);
+    return { key: `parcel:${id}`, type, id, kind: b.template === 'home' ? 'home' : 'shop', x: p.x - fx * 2, z: p.z - fz * 2, w: p.w - 4, d: p.d - 8, facing: p.facing, name: label, accent: '#36d399', parcelId: id, owner: b.tenantName, parcel: p };
+  }
+
+  // Walk to a building's door and go in (or go straight in if already there).
+  visitPlace(id) {
+    const p = PLACES.find((x) => x.id === id);
+    if (!p) return;
+    if (this.inside?.key === `place:${id}`) return;
+    const e = entrancePoint(p, 1.2);
+    const pp = this.player.position;
+    if (!this.inside && Math.hypot(e.x - pp.x, e.z - pp.z) < 6) return this.enterBuilding('place', id);
+    if (this.inside) this.exitBuilding();
+    setTimeout(() => {
+      if (this.navigateTo(e, p.name)) this.nav.enter = { type: 'place', id };
+    }, this.inside ? 900 : 0);
+  }
+
+  _rot(facing) {
+    return { s: 0, n: Math.PI, e: Math.PI / 2, w: -Math.PI / 2 }[facing] || 0;
+  }
+
+  _toWorld(spec, lx, lz) {
+    const th = this._rot(spec.facing);
+    return { x: spec.x + lx * Math.cos(th) + lz * Math.sin(th), z: spec.z - lx * Math.sin(th) + lz * Math.cos(th) };
+  }
+
+  _toLocal(inside, x, z) {
+    const th = this._rot(inside.spec.facing);
+    const dx = x - inside.spec.x;
+    const dz = z - inside.spec.z;
+    return { x: dx * Math.cos(th) - dz * Math.sin(th), z: dx * Math.sin(th) + dz * Math.cos(th) };
+  }
+
+  async _menuFor(spec) {
+    if (!spec.linkId) return {};
+    const extra = {};
+    try {
+      if (['cafe', 'restaurant'].includes(spec.kind)) {
+        const biz = await this.api.commerce.getBusiness(spec.linkId);
+        extra.menu = (biz.catalog || []).slice(0, 7).map((c) => ({ name: c.name, price: `${this.state.wallet?.symbol || '$'}${c.price}` }));
+      }
+      if (spec.kind === 'creator') extra.gigs = this.state.gigs.filter((g) => !g.mine && (!g.status || g.status === 'open')).slice(0, 6).map((g) => ({ title: g.title, budget: g.compensation?.amount ?? '' }));
+      if (spec.kind === 'classroom') extra.courses = (this.state.courses || []).slice(0, 6).map((c) => ({ title: c.title, minutes: c.minutes || c.durationMin }));
+      if (spec.kind === 'cinema') extra.liveHandles = [...this.bots.values()].map((b) => b.handle).concat(['kemi', 'dev', 'ines']).slice(0, 6);
+    } catch {
+      /* boards fall back to defaults */
+    }
+    return extra;
+  }
+
+  async _ensureInterior(spec) {
+    if (this.interiors.has(spec.key)) return this.interiors.get(spec.key);
+    const built = buildInterior({ ...spec, ...(await this._menuFor(spec)) });
+    const g = built.group;
+    g.position.set(spec.x, INTERIOR_Y, spec.z);
+    g.rotation.y = this._rot(spec.facing);
+    g.visible = false;
+    this.scene.add(g);
+    const toW = (lx, lz) => this._toWorld(spec, lx, lz);
+    const boxW = (c) => {
+      const a = toW(c.x0, c.z0);
+      const b = toW(c.x1, c.z1);
+      return { x0: Math.min(a.x, b.x), x1: Math.max(a.x, b.x), z0: Math.min(a.z, b.z), z1: Math.max(a.z, b.z) };
+    };
+    const colliders = built.colliders.map(boxW);
+    const walls = colliders.slice(0, 5);
+    const obstacles = built.obstacles.map(([x, z, r]) => ({ ...toW(x, z), r }));
+    const grid = new SpatialGrid(8);
+    built.spots.forEach((sp, i) => {
+      const w = toW(sp.x, sp.z);
+      grid.upsert(`spot:${i}`, w.x, w.z, { ref: { type: 'spot', id: `${spec.key}#${i}` }, label: sp.label, sub: sp.sub, r: sp.r, acts: sp.acts.map((a) => ({ id: a.id, icon: a.icon, label: a.label, run: () => this._spotAction(a.action, spec) })) });
+    });
+    const staff = built.staff.map((st, i) => {
+      const av = createAvatar({ seed: 500 + i, quality: this.quality, person: st.person });
+      av.position.set(st.x, 0.2, st.z);
+      av.rotation.y = st.ry;
+      g.add(av);
+      return av;
+    });
+    const entry = { key: spec.key, spec, built, colliders, walls, obstacles, grid, staff };
+    this.interiors.set(spec.key, entry);
+    return entry;
+  }
+
+  _spotAction(action, spec) {
+    switch (action.type) {
+      case 'exit':
+        return this.exitBuilding();
+      case 'sheet':
+        return this.sheets.open(action.view, action.props || {});
+      case 'activity':
+        return this.sheets.activity(action.id, spec.type === 'parcel' && spec.kind === 'home' ? 'home' : spec.placeId || spec.id);
+      case 'golive':
+        return this.sheets.open('events', {});
+      default:
+    }
+  }
+
+  async enterBuilding(type, id) {
+    const spec = this.interiorSpec(type, id);
+    if (!spec) return type === 'place' ? this.enterPlace(id) : this.sheets.open('parcel', { id });
+    if (this._doorBusy || this.inside?.key === spec.key) return;
+    this._doorBusy = true;
+    const entry = await this._ensureInterior(spec);
+    this.hud.fade(() => {
+      if (this.inside) this._leaveInterior();
+      this.inside = entry;
+      entry.built.group.visible = true;
+      this.city.root.visible = false;
+      if (this.env?.water) this.env.water.visible = false;
+      this.floorY = INTERIOR_Y + 0.2;
+      const inPt = this._toWorld(spec, 0, entry.built.d / 2 - 2.4);
+      this.player.position.set(inPt.x, this.floorY, inPt.z);
+      const th = this._rot(spec.facing);
+      this.player.rotation.y = th + Math.PI; // face into the room
+      this.cam.yaw = th;
+      this.cam.pitch = 0.32;
+      this._savedDist = this.cam.dist;
+      this.cam.dist = Math.min(this.cam.dist, 5);
+      this.cam.target.set(inPt.x, this.floorY + 1.4, inPt.z);
+      this.cam.curDist = undefined;
+      this.cancelNav();
+      this.scene.fog.near = 1e4;
+      this.scene.fog.far = 2e4;
+      this.hud.setZone(spec.name);
+      this._focusKey = undefined;
+      chime();
+      this._doorBusy = false;
+    });
+    if (type === 'place') {
+      const p = spec.place;
+      this.api.gamification.track(EV.ENTERED_BUSINESS, { placeId: id, businessId: p.link.id }).then((r) => this.hud.showProgress(r)).catch(() => {});
+      this.api.analytics.track('building_entry', { placeId: id, interior: true });
+    }
+  }
+
+  _leaveInterior() {
+    const entry = this.inside;
+    if (!entry) return;
+    entry.built.group.visible = false;
+    this.inside = null;
+    this.city.root.visible = true;
+    if (this.env?.water) this.env.water.visible = true;
+    this.floorY = 0.2;
+    this.scene.fog.near = this.quality === 'low' ? 120 : 260;
+    this.scene.fog.far = this.quality === 'low' ? 420 : 1500;
+    if (this._savedDist) this.cam.dist = this._savedDist;
+    this._focusKey = undefined;
+    this.zoneId = null;
+  }
+
+  exitBuilding() {
+    const entry = this.inside;
+    if (!entry || this._doorBusy) return;
+    this._doorBusy = true;
+    const spec = entry.spec;
+    const [fx, fz] = facingVector(spec.facing);
+    const out = spec.type === 'place' ? entrancePoint(spec.place, 1.6) : { x: spec.x + fx * (spec.d / 2 + 1.8), z: spec.z + fz * (spec.d / 2 + 1.8) };
+    this.hud.fade(() => {
+      this._leaveInterior();
+      this.player.position.set(out.x, 0.2, out.z);
+      this.player.rotation.y = Math.atan2(fx, fz);
+      this.cam.yaw = this.player.rotation.y - Math.PI;
+      this.cam.target.set(out.x, 1.6, out.z);
+      this.cam.curDist = undefined;
+      this._doorExitAt = performance.now();
+      this._doorBusy = false;
+    });
+  }
+
+  // Walking into a building's front door takes you inside.
+  _checkDoors(pos, dx, dz) {
+    if (this._doorExitAt && performance.now() - this._doorExitAt < 1500) return;
+    if (!this._doors || this._doorsFor !== this.state.parcels) {
+      this._doorsFor = this.state.parcels;
+      this._doors = [];
+      for (const p of PLACES) if (interiorKindFor(p)) {
+        const [fx, fz] = facingVector(p.facing);
+        this._doors.push({ type: 'place', id: p.id, x: p.x + fx * (p.d / 2), z: p.z + fz * (p.d / 2), fx, fz });
+      }
+      for (const p of this.state.parcels) {
+        if (!p.building) continue;
+        const [fx, fz] = facingVector(p.facing);
+        const bd = p.d - 8;
+        this._doors.push({ type: 'parcel', id: p.id, x: p.x - fx * 2 + fx * (bd / 2), z: p.z - fz * 2 + fz * (bd / 2), fx, fz });
+      }
+    }
+    for (const d of this._doors) {
+      const rx = pos.x - d.x;
+      const rz = pos.z - d.z;
+      const out = rx * d.fx + rz * d.fz; // distance in front of the façade
+      const lat = Math.abs(rx * d.fz - rz * d.fx);
+      if (out < 1.1 && out > -0.5 && lat < 1.3 && dx * d.fx + dz * d.fz < -0.5) {
+        this.enterBuilding(d.type, d.id);
+        return;
+      }
+    }
+  }
+
+  _interiorFrame(t) {
+    const b = this.inside.built;
+    for (const fn of b.tickers) fn(t);
+    if (b.reelScreen && (!this._lastInnerReel || t - this._lastInnerReel > 0.1)) {
+      this._lastInnerReel = t;
+      drawCinemaFrame(b.reelScreen, t, this._reel);
+    }
+    for (const av of this.inside.staff) {
+      const w = av.getWorldPosition(new THREE.Vector3());
+      const pp = this.player.position;
+      const near = Math.hypot(pp.x - w.x, pp.z - w.z) < 4;
+      animateAvatar(av, t, 0, near && Math.sin(t * 0.9 + av.userData.seed) > 0.2 ? 'talk' : null);
+    }
+  }
+
   // ───────────────────────── frame ─────────────────────────
   _tick() {
     const dt = Math.min(this.clock.getDelta(), 0.05);
     const t = this.clock.elapsedTime;
+    this._buildCrowd();
     this._movePlayer(dt, t);
     this._moveBots(dt, t);
     this._moveAmbient(dt, t);
@@ -687,10 +954,30 @@ export class WorldApp {
     this._proximity();
     this._camera(dt);
     this._sky(dt);
-    this.city.update(t, this.daylight, this._reel);
+    if (this.inside) this._interiorFrame(t);
+    else this.city.update(t, this.daylight, this._reel);
     if (this.navMarker.visible) this.navMarker.material.opacity = 0.5 + Math.sin(t * 5) * 0.35;
     this.post.render(this.scene, this.camera);
     this.hud.frame(t);
+  }
+
+  // Everyone who occupies space this frame (for avoidance and separation).
+  _buildCrowd() {
+    const c = this.crowd;
+    c.length = 0;
+    const add = (av, r = 0.32) => av.visible !== false && c.push({ x: av.position.x, z: av.position.z, r, ref: av });
+    if (this.inside) {
+      add(this.player);
+      for (const s of this.interiorStaff || []) add(s);
+      for (const e of this.peers.values()) if (e.avatar.visible) add(e.avatar);
+      return;
+    }
+    add(this.player);
+    for (const w of this.walkers) add(w.av);
+    for (const it of this.idlers) add(it.av);
+    for (const b of this.bots.values()) add(b.avatar);
+    for (const a of this.agents) add(a.avatar);
+    for (const e of this.peers.values()) add(e.avatar);
   }
 
   _input() {
@@ -731,9 +1018,10 @@ export class WorldApp {
       if (d < 0.6) {
         this.nav.i += 1;
         if (this.nav.i >= this.nav.path.length) {
-          const label = this.nav.label;
+          const { label, enter } = this.nav;
           this.cancelNav();
-          if (label) this.hud.toast(`Arrived at ${label}`, '📍');
+          if (enter) this.enterBuilding(enter.type, enter.id);
+          else if (label) this.hud.toast(`Arrived at ${label}`, '📍');
         }
       } else {
         dx = vx / d;
@@ -748,15 +1036,26 @@ export class WorldApp {
       dz /= len;
       const nx = pos.x + dx * this.speed * dt;
       const nz = pos.z + dz * this.speed * dt;
-      const res = this._collide(nx, nz, pos.x, pos.z);
-      pos.x = res.x;
-      pos.z = res.z;
+      let res = this._collide(nx, nz, pos.x, pos.z);
+      if (!this.inside) res = this.obstacles.resolve(res.x, res.z, 0.38);
+      res = separate(res.x, res.z, 0.32, this.crowd, this.player);
+      // Never let separation shove the player into a wall.
+      const back = this._collide(res.x, res.z, pos.x, pos.z);
+      pos.x = back.x;
+      pos.z = back.z;
       const want = Math.atan2(dx, dz);
       let diff = want - this.player.rotation.y;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));
       this.player.rotation.y += diff * Math.min(1, dt * 12);
     }
+    pos.y = this.floorY;
     animateAvatar(this.player, t, this.speed / 6, this.emote);
+    if (this.inside) {
+      const l = this._toLocal(this.inside, pos.x, pos.z);
+      if (l.z > this.inside.built.d / 2 - 0.15 && Math.abs(l.x) < 1.4 && !this._doorBusy) this.exitBuilding();
+      return;
+    }
+    if (len > 0.01 && !this._doorBusy) this._checkDoors(pos, dx, dz);
     const zone = zoneAt(pos.x, pos.z);
     if (zone && zone.id !== this.zoneId) {
       this.zoneId = zone.id;
@@ -766,6 +1065,7 @@ export class WorldApp {
   }
 
   _collide(nx, nz, ox, oz) {
+    if (this.inside) return this._collideBoxes(nx, nz, ox, oz, this.inside.colliders, 0.4);
     const r = 0.55;
     const lim = DISTRICT.half + 5;
     nx = Math.max(-lim, Math.min(lim, nx));
@@ -797,9 +1097,38 @@ export class WorldApp {
     return { x: nx, z: nz };
   }
 
+  _collideBoxes(nx, nz, ox, oz, boxes, r) {
+    for (const c of boxes) {
+      if (nx > c.x0 - r && nx < c.x1 + r && nz > c.z0 - r && nz < c.z1 + r) {
+        const wasInX = ox > c.x0 - r && ox < c.x1 + r;
+        const wasInZ = oz > c.z0 - r && oz < c.z1 + r;
+        if (!wasInX) nx = ox;
+        else if (!wasInZ) nz = oz;
+        else {
+          const pens = [[nx - (c.x0 - r), 'x', c.x0 - r], [(c.x1 + r) - nx, 'x', c.x1 + r], [nz - (c.z0 - r), 'z', c.z0 - r], [(c.z1 + r) - nz, 'z', c.z1 + r]];
+          pens.sort((a, b) => a[0] - b[0]);
+          if (pens[0][1] === 'x') nx = pens[0][2];
+          else nz = pens[0][2];
+        }
+      }
+    }
+    if (this.inside) for (const o of this.inside.obstacles) {
+      const dx = nx - o.x;
+      const dz = nz - o.z;
+      const d = Math.hypot(dx, dz);
+      if (d < o.r + 0.3 && d > 1e-4) {
+        nx = o.x + (dx / d) * (o.r + 0.3);
+        nz = o.z + (dz / d) * (o.r + 0.3);
+      }
+    }
+    return { x: nx, z: nz };
+  }
+
   _moveBots(dt, t) {
     for (const b of this.bots.values()) {
       const pos = b.avatar.position;
+      b.avatar.visible = !this.inside;
+      if (this.inside) continue;
       if (b.talking) {
         b.speed = 0;
         const dx = this.player.position.x - pos.x;
@@ -829,10 +1158,22 @@ export class WorldApp {
           b.path.i += 1;
           if (b.path.i >= b.path.pts.length) b.path = null;
         } else {
-          b.speed = 1.4;
-          pos.x += (dx / d) * b.speed * dt;
-          pos.z += (dz / d) * b.speed * dt;
+          const st = steer(pos.x, pos.z, dx / d, dz / d, this.obstacles, this.crowd, b.avatar, 1.1);
+          b.speed = 1.4 * st.slow;
+          let nx = pos.x + (dx / d) * b.speed * dt + (-dz / d) * st.lateral * dt * 1.2;
+          let nz = pos.z + (dz / d) * b.speed * dt + (dx / d) * st.lateral * dt * 1.2;
+          ({ x: nx, z: nz } = this.obstacles.resolve(nx, nz, 0.32));
+          ({ x: nx, z: nz } = separate(nx, nz, 0.3, this.crowd, b.avatar));
+          pos.x = nx;
+          pos.z = nz;
           b.avatar.rotation.y = Math.atan2(dx, dz);
+          // Stuck behind something for a while: re-plan.
+          b.stuck = st.slow < 0.2 ? (b.stuck || 0) + dt : 0;
+          if (b.stuck > 2.5) {
+            b.path = null;
+            b.wait = 0.5;
+            b.stuck = 0;
+          }
         }
       }
       animateAvatar(b.avatar, t, b.speed / 6, b.emote || (b.talking ? 'talk' : null));
@@ -855,12 +1196,36 @@ export class WorldApp {
     };
     const ppos = this.player.position;
     for (const w of this.walkers) {
+      // Walk the route, stepping around props and people and pausing for
+      // anyone directly in front, instead of ghosting through them.
+      const av = w.av;
+      const a = w.ring[w.seg];
+      const b = w.ring[(w.seg + 1) % w.ring.length];
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      const dirX = (b[0] - a[0]) / len;
+      const dirZ = (b[1] - a[1]) / len;
+      const near = Math.hypot(av.position.x - ppos.x, av.position.z - ppos.z) < 70;
+      const st = near ? steer(av.position.x, av.position.z, dirX, dirZ, this.obstacles, this.crowd, av) : { lateral: 0, slow: 1 };
+      w.lat = (w.lat || 0) + (st.lateral - (w.lat || 0)) * Math.min(1, dt * 2.5);
+      w.slow = (w.slow ?? 1) + (st.slow - (w.slow ?? 1)) * Math.min(1, dt * 6);
+      const saved = w.speed;
+      w.speed = saved * w.slow;
       step(w, (x, z, ry) => {
-        w.av.position.set(x, 0.2, z);
-        w.av.rotation.y = ry;
+        let px = x - dirZ * w.lat;
+        let pz = z + dirX * w.lat;
+        if (near) {
+          ({ x: px, z: pz } = this.obstacles.resolve(px, pz, 0.3));
+          ({ x: px, z: pz } = separate(px, pz, 0.3, this.crowd, av));
+        }
+        av.position.set(px, 0.2, pz);
+        let diff = ry - av.rotation.y;
+        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+        av.rotation.y += diff * Math.min(1, dt * 8);
       });
-      w.av.visible = Math.hypot(w.av.position.x - ppos.x, w.av.position.z - ppos.z) < 70;
-      if (w.av.visible) animateAvatar(w.av, t, w.speed / 6);
+      const moved = w.speed;
+      w.speed = saved;
+      av.visible = near && !this.inside;
+      if (av.visible) animateAvatar(av, t, moved / 6);
     }
     // Only people near the camera cast shadows (big draw-call saving).
     if (!this._shadowT || t - this._shadowT > 0.5) {
@@ -877,17 +1242,61 @@ export class WorldApp {
     }
     for (const it of this.idlers) {
       const d = Math.hypot(it.av.position.x - ppos.x, it.av.position.z - ppos.z);
-      it.av.visible = d < 70;
+      it.av.visible = d < 70 && !this.inside;
       if (it.av.visible) animateAvatar(it.av, t, 0, it.emote);
     }
+    this._traffic(dt, step);
+  }
+
+  // Cars brake for anything in their lane (people, players, the car ahead),
+  // light their brake lights, and honk at a player standing in the road.
+  _traffic(dt, step) {
+    const now = performance.now();
+    const pp = this.player.position;
     for (const c of this.cars) {
-      // Yield to the player if they're in the lane ahead.
-      const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(c.g.quaternion);
-      const toP = new THREE.Vector3(ppos.x - c.g.position.x, 0, ppos.z - c.g.position.z);
-      const ahead = toP.dot(fwd);
-      const lateral = toP.clone().sub(fwd.clone().multiplyScalar(ahead)).length();
-      const blocked = ahead > 0 && ahead < 9 && lateral < 2.2;
-      c.v = (c.v ?? c.speed) + ((blocked ? 0 : c.speed) - (c.v ?? c.speed)) * Math.min(1, dt * 3);
+      c.g.visible = !this.inside;
+      const gx = c.g.position.x;
+      const gz = c.g.position.z;
+      const fx = Math.sin(c.g.rotation.y);
+      const fz = Math.cos(c.g.rotation.y);
+      let gap = Infinity;
+      let playerGap = Infinity;
+      const look = 6 + (c.v ?? c.speed) * 2.2;
+      const check = (x, z, halfLen, lat) => {
+        const dx = x - gx;
+        const dz = z - gz;
+        const ahead = dx * fx + dz * fz;
+        if (ahead <= 0 || ahead > look + halfLen) return Infinity;
+        if (Math.abs(dx * fz - dz * fx) > lat) return Infinity;
+        return ahead - halfLen;
+      };
+      if (!this.inside) {
+        playerGap = check(pp.x, pp.z, 2.6, 1.7);
+        gap = playerGap;
+      }
+      for (const p of this.crowd) if (p.ref !== this.player) gap = Math.min(gap, check(p.x, p.z, 2.6, 1.6));
+      for (const o of this.cars) if (o !== c) gap = Math.min(gap, check(o.g.position.x, o.g.position.z, 5.2, 1.4));
+      const v = c.v ?? c.speed;
+      // Speed that still stops ~1 m short of the obstacle at 7 m/s² braking.
+      const safe = Math.sqrt(2 * 7 * Math.max(0, gap - 1));
+      const target = Math.min(c.speed, safe);
+      c.v = target < v ? Math.max(target, v - 14 * dt) : Math.min(target, v + 2.5 * dt);
+      const braking = target < v - 0.3 || c.v < 0.2;
+      if (c.brake) c.brake.emissiveIntensity = braking ? 3.5 : 0.35 + (1 - (this.daylight ?? 1)) * 0.8;
+      // Honk when the player is what's stopping us.
+      c.blockedFor = playerGap < 14 && c.v < 3 ? c.blockedFor + dt : 0;
+      const closeCall = playerGap < 9 && v > 4;
+      if ((c.blockedFor > 0.8 || closeCall) && now - c.honkAt > 4500) {
+        c.honkAt = now;
+        const dist = Math.hypot(gx - this.camera.position.x, gz - this.camera.position.z);
+        const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+        const pan = ((gx - this.camera.position.x) * right.x + (gz - this.camera.position.z) * right.z) / Math.max(4, dist);
+        honk(Math.max(0.15, 1 - dist / 60), pan, c.blockedFor > 3);
+        if (!this._honkToastAt || now - this._honkToastAt > 12000) {
+          this._honkToastAt = now;
+          this.hud.toast('Beep beep! A driver is waiting for you to get out of the road', '🚗');
+        }
+      }
       const saved = c.speed;
       c.speed = c.v;
       step(c, (x, z, ry) => {
@@ -913,13 +1322,18 @@ export class WorldApp {
       e.avatar.rotation.y += diff * k;
       const v = Math.hypot(dx, dz) / Math.max(dt, 0.016);
       e.speed += ((p.moving ? Math.min(6.5, Math.max(1.4, v)) : 0) - e.speed) * k;
-      animateAvatar(e.avatar, t, e.speed / 6, p.emote);
+      // Interiors share x/z with the city: only show people in the same space.
+      e.avatar.visible = (p.inside || null) === (this.inside?.key || null);
+      e.avatar.position.y = p.inside ? INTERIOR_Y + 0.2 : 0.2;
+      if (e.avatar.visible) animateAvatar(e.avatar, t, e.speed / 6, p.emote);
     }
   }
 
   _agentsLook(t) {
     const pp = this.player.position;
     for (const a of this.agents) {
+      a.avatar.visible = !this.inside;
+      if (this.inside) continue;
       const d = Math.hypot(pp.x - a.x, pp.z - a.z);
       if (d < 10) a.avatar.rotation.y = Math.atan2(pp.x - a.x, pp.z - a.z);
       animateAvatar(a.avatar, t, 0, d < 5 && Math.sin(t * 0.8) > 0.6 ? 'wave' : null);
@@ -930,7 +1344,7 @@ export class WorldApp {
     const active = new Map(this.state.tokens.map((x) => [x.id, x]));
     for (const [id, m] of this.tokenMeshes) {
       const tok = active.get(id);
-      m.visible = !!tok && tok.active && !tok.collected;
+      m.visible = !!tok && tok.active && !tok.collected && !this.inside;
       if (!m.visible) continue;
       m.rotation.y = t * 2;
       m.position.y = 1.6 + Math.sin(t * 3) * 0.25;
@@ -957,7 +1371,7 @@ export class WorldApp {
         this._grid.upsert(`place:${p.id}`, e.x, e.z, { ref: { type: 'place', id: p.id }, label: p.name, r: PROX.interactRadius });
       }
       for (const p of PARCELS) this._grid.upsert(`parcel:${p.id}`, p.x, p.z - p.d / 2 - 1, { ref: { type: 'parcel', id: p.id }, label: p.name, r: 8 });
-      if (this.flags.WORLD_ADS_ENABLED) for (const b of BILLBOARDS) this._grid.upsert(`bb:${b.id}`, b.x, b.z, { ref: { type: 'billboard', id: b.id }, label: 'Billboard', r: 9 });
+      if (this.flags.WORLD_ADS_ENABLED) for (const b of this.city.adSlots.filter((x) => !x.y)) this._grid.upsert(`bb:${b.id}`, b.x, b.z, { ref: { type: 'billboard', id: b.id }, label: 'Billboard', r: 9 });
       for (const a of AGENTS) this._grid.upsert(`agent:${a.id}`, a.x, a.z, { ref: { type: 'agent', id: a.id }, label: `${a.name} · ${a.role}`, r: 4.5 });
       this._grid.upsert('plaza', 0, 0, { ref: { type: 'plaza', id: PLAZA.id }, label: 'Central Plaza fountain', r: 8.5 });
     }
@@ -965,7 +1379,9 @@ export class WorldApp {
     for (const id of [...this._grid.items.keys()]) {
       if (id.startsWith('player:') && !this.bots.has(id.slice(7)) && !this.peers.has(id.slice(7))) this._grid.remove(id);
     }
-    const near = this._grid.query(pp.x, pp.z, 10, (it) => Math.hypot(it.x - pp.x, it.z - pp.z) <= it.data.r);
+    const grid = this.inside ? this.inside.grid : this._grid;
+    if (this.inside) for (const p of this.people()) grid.upsert(`player:${p.id}`, p.x, p.z, { ref: { type: 'player', id: p.id }, label: `@${p.name}`, r: PROX.approachRadius, person: p });
+    const near = grid.query(pp.x, pp.z, 10, (it) => Math.hypot(it.x - pp.x, it.z - pp.z) <= it.data.r);
     // People win ties: they're the core social mechanic.
     near.sort((a, b) => (a.data.ref.type === 'player' ? a.dist - 2 : a.dist) - (b.data.ref.type === 'player' ? b.dist - 2 : b.dist));
     const f = near[0] || null;
@@ -1002,20 +1418,41 @@ export class WorldApp {
   _camera(dt) {
     const c = this.cam;
     const k = Math.min(1, dt * 6);
-    c.target.lerp(new THREE.Vector3(this.player.position.x, 1.6, this.player.position.z), k);
+    const ty = this.floorY + 1.4;
+    if (Math.abs(c.target.y - ty) > 5) c.target.set(this.player.position.x, ty, this.player.position.z);
+    c.target.lerp(new THREE.Vector3(this.player.position.x, ty, this.player.position.z), k);
     const dir = new THREE.Vector3(Math.sin(c.yaw) * Math.cos(c.pitch), Math.sin(c.pitch), Math.cos(c.yaw) * Math.cos(c.pitch));
     // Pull the camera in front of any building between it and the player.
-    let dist = c.dist;
-    for (let s = 0.5; s <= c.dist; s += 0.5) {
+    const maxD = this.inside ? Math.min(c.dist, 6.5) : c.dist;
+    let dist = maxD;
+    const boxes = this.inside ? this.inside.walls : this.city.colliders;
+    for (let s = 0.5; s <= maxD; s += 0.5) {
       const p = c.target.clone().addScaledVector(dir, s);
-      if (this.city.colliders.some((b) => !b.round && b.x1 - b.x0 < 400 && p.x > b.x0 - 0.3 && p.x < b.x1 + 0.3 && p.z > b.z0 - 0.3 && p.z < b.z1 + 0.3)) {
+      if (this.inside && p.y > this.floorY + this.inside.built.h - 0.4) {
+        dist = Math.max(1.5, s - 0.4);
+        break;
+      }
+      if (boxes.some((b) => !b.round && !b.low && b.x1 - b.x0 < 400 && p.x > b.x0 - 0.3 && p.x < b.x1 + 0.3 && p.z > b.z0 - 0.3 && p.z < b.z1 + 0.3)) {
         dist = Math.max(1.5, s - 0.6);
         break;
       }
     }
     c.curDist = c.curDist === undefined ? dist : c.curDist + (dist - c.curDist) * Math.min(1, dt * (dist < c.curDist ? 14 : 3));
     this.camera.position.copy(c.target).addScaledVector(dir, c.curDist);
-    if (this.camera.position.y < 0.6) this.camera.position.y = 0.6;
+    if (this.inside) {
+      // Keep the camera inside the room (the doorway would let it slip out).
+      const b = this.inside.built;
+      const l = this._toLocal(this.inside, this.camera.position.x, this.camera.position.z);
+      const lx = Math.max(-b.w / 2 + 0.35, Math.min(b.w / 2 - 0.35, l.x));
+      const lz = Math.max(-b.d / 2 + 0.35, Math.min(b.d / 2 - 0.45, l.z));
+      if (lx !== l.x || lz !== l.z) {
+        const w = this._toWorld(this.inside.spec, lx, lz);
+        this.camera.position.x = w.x;
+        this.camera.position.z = w.z;
+      }
+      this.camera.position.y = Math.min(this.camera.position.y, this.floorY + b.h - 0.5);
+    }
+    if (this.camera.position.y < this.floorY + 0.4) this.camera.position.y = this.floorY + 0.4;
     // Look slightly above the player so the skyline fills the frame when close.
     const lift = c.lookUp * Math.max(0, 1 - c.pitch / 0.7) * Math.min(1, c.curDist / 7);
     this.camera.lookAt(c.target.x, c.target.y + lift, c.target.z);
@@ -1029,6 +1466,18 @@ export class WorldApp {
     const d = t.daylight;
     this.daylight = d;
     const night = 1 - d;
+    if (this.inside) {
+      // Indoors: steady, warm artificial light whatever the time of day.
+      this.env?.update(t.hoursF, d, dt);
+      this.hemi.intensity = 0.55;
+      this.hemi.color.set('#fff3e3');
+      this.sun.intensity = 0.4;
+      this._sunDir = new THREE.Vector3(20, 90, 30);
+      this.renderer.toneMappingExposure = this.env ? 0.62 : 0.9;
+      this.post.setNight(0.6);
+      if (this.inside.built.streetMat) this.inside.built.streetMat.color.set(d > 0.3 ? '#d7ebf7' : '#1b2740');
+      return;
+    }
     const duskAmt = Math.max(0, 1 - Math.abs(t.hoursF - 18.5) / 1.6) + Math.max(0, 1 - Math.abs(t.hoursF - 6) / 1.2);
     if (this.env) {
       const { sunDir, elevation } = this.env.update(t.hoursF, d, dt);
@@ -1062,17 +1511,24 @@ export class WorldApp {
   _rotateAds() {
     if (!this.flags.WORLD_ADS_ENABLED) return;
     const pp = this.player.position;
-    for (const b of BILLBOARDS) {
+    const now = Date.now();
+    for (const b of this.city.adSlots) {
+      // Only screens near the player are fetched, and only when their
+      // creative is due to rotate, to keep Ads traffic proportional.
+      const dist = Math.hypot(pp.x - b.x, pp.z - b.z);
+      if (dist > 160 || (b._next && now < b._next) || b._pending) continue;
+      b._pending = true;
       this.api.ads.getCreative(b.placementId).then((c) => {
+        b._pending = false;
         if (!c) return;
+        b._next = Date.now() + Math.max(6000, c.rotatesInMs || 15000);
         this.city.setBillboardCreative(b.id, c);
-        // Impression: within 45 m and roughly in view.
-        const dist = Math.hypot(pp.x - b.x, pp.z - b.z);
-        if (dist < 45) {
-          const v = new THREE.Vector3(b.x, b.y + b.pole + b.h / 2, b.z).project(this.camera);
+        // Impression: within 60 m and roughly in view.
+        if (dist < 60 && !this.inside) {
+          const v = new THREE.Vector3(b.x, (b.y || 0) + b.pole + b.h / 2, b.z).project(this.camera);
           if (Math.abs(v.x) < 1 && Math.abs(v.y) < 1 && v.z < 1) this.api.ads.trackImpression(b.placementId, c.id);
         }
-      });
+      }).catch(() => (b._pending = false));
     }
     this.api.world.listReels().then((r) => (this._reel = r[Math.floor(Date.now() / 12000) % r.length]));
   }

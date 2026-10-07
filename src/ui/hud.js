@@ -124,6 +124,8 @@ export class Hud {
         return app.openRef(arg);
       case 'go':
         return app.navigateTo(arg, arg.label);
+      case 'visit':
+        return app.visitPlace(arg);
       case 'quest':
         return app.sheets.open('quests');
       case 'notif': {
@@ -296,6 +298,8 @@ export class Hud {
         return 'Sponsored · World ad placement';
       case 'plaza':
         return 'Central Plaza';
+      case 'spot':
+        return f.sub || '';
       default:
         return '';
     }
@@ -316,13 +320,18 @@ export class Hud {
         ];
       case 'place': {
         const p = PLACES.find((x) => x.id === id);
-        const acts = [{ id: 'enter', icon: '🚪', label: { market: 'Browse', creator: 'Find gigs', community: 'Enter', education: 'Learn', games: 'Play', transit: 'Ride', media: 'Watch', tools: 'Use tools', ai: 'Create' }[p.kind] || 'Visit', run: () => app.enterPlace(id) }];
+        const walkIn = !!app.interiorSpec('place', id);
+        const acts = [{ id: 'enter', icon: '🚪', label: walkIn ? 'Go inside' : { market: 'Browse', tools: 'Use tools' }[p.kind] || 'Visit', run: () => (walkIn ? app.enterBuilding('place', id) : app.enterPlace(id)) }];
         if (['cafe', 'restaurant', 'store'].includes(p.kind) && flags.WORLD_COMMERCE_ENABLED) acts.push({ id: 'order', icon: '🛍️', label: 'Order', run: () => { app.enterPlace(id); } });
         if (p.activity && flags.WORLD_NEEDS_ENABLED) acts.push({ id: 'act', icon: '✨', label: ECONOMY.activities[p.activity].label, run: () => sheets.activity(p.activity, id) });
         return acts;
       }
-      case 'parcel':
-        return [{ id: 'view', icon: '🏗️', label: 'View parcel', run: () => sheets.open('parcel', { id }) }];
+      case 'parcel': {
+        const walkIn = !!app.interiorSpec('parcel', id);
+        return [...(walkIn ? [{ id: 'enter', icon: '🚪', label: 'Go inside', run: () => app.enterBuilding('parcel', id) }] : []), { id: 'view', icon: '🏗️', label: 'View parcel', run: () => sheets.open('parcel', { id }) }];
+      }
+      case 'spot':
+        return f.acts || [];
       case 'agent':
         return [{ id: 'talk', icon: '🤖', label: `Talk to ${AGENTS.find((a) => a.id === id).name}`, run: () => sheets.open('agent', { id }) }];
       case 'billboard':
@@ -678,7 +687,7 @@ export class Hud {
       const d = Math.hypot(e.x - pp.x, e.z - pp.z);
       if (d < 55 && (!best || d < best.d)) best = { p, d };
     }
-    if (!best || this.app.sheets.top) {
+    if (!best || this.app.sheets.top || this.app.inside) {
       el.hidden = true;
       return;
     }
@@ -690,7 +699,7 @@ export class Hud {
     this._bizId = best.p.id;
     el.hidden = false;
     el.innerHTML = html`<div class="pw-biz-row"><div class="pw-biz-icon" style="--accent:${best.p.accent}">${KIND_ICON[best.p.kind]}</div><div class="pw-biz-txt"><b>${best.p.name}</b><small>${v.kindLabel} · <span class="pw-biz-dist">${Math.round(best.d)} m</span></small>${v.rating ? html`<small class="pw-stars">★ ${v.rating.toFixed(1)}</small>` : ''}</div></div>
-      <div class="pw-biz-acts"><button class="pw-btn sm" data-hud="go" data-arg='${esc(JSON.stringify({ ...entrancePoint(best.p), label: best.p.name }))}'>Visit</button><button class="pw-btn sm ghost" data-hud="open" data-arg='${esc(JSON.stringify({ type: 'place', id: best.p.id }))}'>${v.commerce ? 'Order' : 'Open'}</button><button class="pw-btn sm ghost" data-hud="ask" data-arg='${esc(JSON.stringify(best.p.name))}'>More</button></div>`.s;
+      <div class="pw-biz-acts"><button class="pw-btn sm" data-hud="visit" data-arg='${esc(JSON.stringify(best.p.id))}'>Visit</button><button class="pw-btn sm ghost" data-hud="open" data-arg='${esc(JSON.stringify({ type: 'place', id: best.p.id }))}'>${v.commerce ? 'Order' : 'Open'}</button><button class="pw-btn sm ghost" data-hud="ask" data-arg='${esc(JSON.stringify(best.p.name))}'>More</button></div>`.s;
   }
 
   _plate(id, cls, htmlStr) {
@@ -731,7 +740,16 @@ export class Hud {
     for (const p of app.people()) {
       const el = this._plate(`p:${p.id}`, `person ${focusId === p.id ? 'focus' : ''}`, html`<span class="pw-dot" style="background:${PRESENCE_COLORS[p.presence] || '#36d399'}"></span>@${p.name}${focusId === p.id ? html`<b class="pw-talk">TALK · E</b>` : ''}`.s);
       el.className = `pw-plate person ${focusId === p.id ? 'focus' : ''}`;
-      place(el, p.x, 2.9, p.z, 45);
+      place(el, p.x, (app.inside ? app.floorY : 0) + 2.7, p.z, 45);
+    }
+    if (app.inside) {
+      for (const [id, el] of this.plates) {
+        if (!el._seen) {
+          el.remove();
+          this.plates.delete(id);
+        }
+      }
+      return;
     }
     for (const a of AGENTS) place(this._plate(`a:${a.id}`, 'agent', html`<span>${a.icon}</span><b>${a.name}</b><small>${a.role}</small>`.s), a.x, 3, a.z, 40);
     // Gig pins over places (work exists physically in the world).

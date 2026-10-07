@@ -75,6 +75,8 @@ export class City {
     this.root.name = 'city';
     scene.add(this.root);
     this.colliders = [];
+    this.obstacles = []; // [x, z, r] round props people must walk around
+    this._localObs = [];
     this.pickables = [];
     this.windowMats = [];
     this.nightMats = [];
@@ -101,8 +103,10 @@ export class City {
     for (const p of cfg.places) this._place(p);
     for (const p of cfg.parcels) this._parcel(p);
     if (this.pbr) this._dressing();
+    this.adSlots = [];
     for (const b of cfg.billboards) this._billboard(b);
     for (const c of cfg.filler) this._filler(c);
+    if (cfg.billboards.length) this._placeBanners();
     this._streetFurniture();
     for (const g of this.placeGroups.values()) batchStatic(g);
     batchStatic(this.root);
@@ -290,6 +294,7 @@ export class City {
     if (this.pbr) for (const [px, pz] of [[-13, -13], [13, 13], [-13, 13], [13, -13]]) {
       const pot = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 0.9, 0.9, 24), new THREE.MeshStandardMaterial({ color: '#8f8a80', roughness: 0.8 }));
       pot.position.set(px, 0.65, pz);
+      this.obstacles.push([px, pz, 1.15]);
       pot.castShadow = true;
       this.root.add(pot);
       this._placeModel(this.root, 'plant', 2.2, px, 1.1, pz);
@@ -301,6 +306,8 @@ export class City {
       bench.position.set(Math.cos(a) * 10.5, 0.2, Math.sin(a) * 10.5);
       bench.rotation.y = -a + Math.PI / 2;
       this.root.add(bench);
+      const th = bench.rotation.y;
+      for (const o of [-0.75, 0, 0.75]) this.obstacles.push([bench.position.x + Math.cos(th) * o, bench.position.z - Math.sin(th) * o, 0.42]);
     }
   }
 
@@ -316,10 +323,15 @@ export class City {
       return x > f.x0 - 1 && x < f.x1 + 1 && z > f.z0 - 1 && z < f.z1 + 1;
     }));
     addPalms(this.root, ok, 3);
+    for (const [x, z] of ok) this.obstacles.push([x, z, 0.45]);
     this.terraceSeats = [
       ...addTerrace(this.root, { x: -25.5, z: -10.5, w: 6, d: 13, cols: 2, rows: 3, colors: ['#f4efe6', '#2f6e5a'] }),
       ...addTerrace(this.root, { x: -25.5, z: 10.5, w: 6, d: 13, cols: 2, rows: 3, colors: ['#b5422c', '#f4efe6'] }),
     ];
+    for (let k = 0; k + 1 < this.terraceSeats.length; k += 2) {
+      const [a, b] = [this.terraceSeats[k], this.terraceSeats[k + 1]];
+      this.obstacles.push([(a.x + b.x) / 2, (a.z + b.z) / 2, 0.55], [a.x, a.z, 0.3], [b.x, b.z, 0.3]);
+    }
     // Long planters with plants along the promenade edges.
     const shrubs = [];
     const planter = new THREE.MeshStandardMaterial({ color: '#d9d2c5', roughness: 0.85 });
@@ -328,6 +340,8 @@ export class City {
       const pl = new THREE.Mesh(box, planter);
       pl.scale.set(rot ? 8 : 1.4, 0.7, rot ? 1.4 : 8);
       pl.position.set(x, 0.55, z);
+      const [hx, hz] = rot ? [4, 0.7] : [0.7, 4];
+      this.colliders.push({ x0: x - hx, x1: x + hx, z0: z - hz, z1: z + hz, low: true });
       pl.castShadow = pl.receiveShadow = true;
       const so = new THREE.Mesh(box, soil);
       so.scale.set(rot ? 7.6 : 1.1, 0.05, rot ? 1.1 : 7.6);
@@ -490,6 +504,7 @@ export class City {
       pl.scale.set(0.9, 0.55, 0.9);
       pl.position.set(sx * (w * 0.43 - 0.6), 0.28, d / 2 + 0.9);
       g.add(pl);
+      this._localObs.push([pl.position.x, pl.position.z, 0.62]);
       if (this.pbr) {
         const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(0.55, 1), new THREE.MeshStandardMaterial({ color: '#3f7a3a', roughness: 0.9, flatShading: true }));
         bush.position.set(pl.position.x, 0.95, pl.position.z);
@@ -599,6 +614,7 @@ export class City {
       const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 3.5, 8), this.mats.metal);
       post.position.set(sx * w * 0.2, 1.8, d / 2 + 3.1);
       g.add(post);
+      this._localObs.push([sx * w * 0.2, d / 2 + 3.1, 0.2]);
     }
     g.add(body, curtain, band, sign, canopy, this._roofCap(w, d, h, color));
     if (this.pbr && p.led) {
@@ -670,6 +686,8 @@ export class City {
         }
         stall.children.forEach((c) => (c.castShadow = true));
         stall.position.set(i * 10.5, 0.2, j * 10);
+        for (const ox of [-1.4, 0, 1.4]) this._localObs.push([i * 10.5 + ox, j * 10 + 1.2, 0.72]);
+        for (const [px, pz] of [[-2, -1.6], [2, -1.6], [-2, 1.8], [2, 1.8]]) this._localObs.push([i * 10.5 + px, j * 10 + pz, 0.15]);
         if (this.pbr) {
           const props = ['boombox', 'camera', 'lantern', 'toycar', 'bottle', 'vase', 'olives', 'avocado'];
           this._placeModel(stall, props[k % props.length], { boombox: 0.6, camera: 0.45, lantern: 0.7, toycar: 0.45, bottle: 0.35, vase: 0.6, olives: 0.35, avocado: 0.2 }[props[k % props.length]], 0.6, 1.35, 1.2);
@@ -731,6 +749,7 @@ export class City {
       const col = i % 3;
       const row = Math.floor(i / 3);
       k.position.set(-9 + col * 9, 0.2, -3 + row * 7);
+      for (const ox of [-0.65, 0.65]) this._localObs.push([-9 + col * 9 + ox, -3 + row * 7, 0.75]);
       g.add(k);
     });
     const sign = this._sign(p.name, 'Free Pludor tools', p.accent, 10, 1.8);
@@ -745,9 +764,12 @@ export class City {
   _place(p) {
     const seed = [...p.id].reduce((a, c) => a + c.charCodeAt(0), 0);
     const T = { storefront: this._storefront, tower: this._tower, hall: this._hall, cinema: this._cinema, market: this._market, kiosks: this._kiosks }[p.template];
+    this._localObs.length = 0;
     const g = T.call(this, p, seed);
     g.position.set(p.x, 0.2, p.z);
     g.rotation.y = FACING_ROT[p.facing];
+    const th = g.rotation.y;
+    for (const [lx, lz, r] of this._localObs) this.obstacles.push([p.x + lx * Math.cos(th) + lz * Math.sin(th), p.z - lx * Math.sin(th) + lz * Math.cos(th), r]);
     g.userData.ref = { type: 'place', id: p.id };
     this.root.add(g);
     this.pickables.push(g);
@@ -860,7 +882,13 @@ export class City {
     g.position.set(b.x, b.y + 0.2, b.z);
     g.rotation.y = Math.atan2(b.lookAt[0] - b.x, b.lookAt[1] - b.z);
     g.userData.ref = { type: 'billboard', id: b.id };
-    for (const sx of [-1, 1]) {
+    if (!b.y && b.pole > 1) {
+      for (const sx of [-1, 1]) {
+        const ox = sx * b.w * 0.3;
+        this.obstacles.push([b.x + Math.cos(g.rotation.y) * ox, b.z - Math.sin(g.rotation.y) * ox, 0.3]);
+      }
+    }
+    if (!b.wall) for (const sx of [-1, 1]) {
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, b.pole, 8), this.mats.metal);
       pole.position.set(sx * b.w * 0.3, b.pole / 2, -0.2);
       pole.castShadow = true;
@@ -877,6 +905,49 @@ export class City {
     this.root.add(g);
     this.pickables.push(g);
     this.billboards.set(b.id, { group: g, face, placement: b, creativeId: null });
+    this.adSlots.push(b);
+  }
+
+  // Extra ad inventory on buildings: a wall billboard facing the street and,
+  // on mid-rise blocks, a rooftop billboard. Each is its own Ads placement.
+  _buildingAds(id, { cx, cz, w, d, h, alongX, side, r }) {
+    if (!this.cfg.billboards.length) return;
+    const span = alongX ? w : d;
+    const aw = Math.min(span * 0.72, 16);
+    const ah = aw * 0.5;
+    const nx = alongX ? 0 : side;
+    const nz = alongX ? side : 0;
+    const half = alongX ? d / 2 : w / 2;
+    if (h >= 14) {
+      const y = Math.min(h - ah - 1.5, 5 + r() * 6);
+      this._billboard({ id: `wall-${id}`, placementId: `world.central.wall-${id}`, wall: true, x: cx + nx * (half + 0.25), z: cz + nz * (half + 0.25), y, w: aw, h: ah, pole: 0, lookAt: [cx + nx * 60, cz + nz * 60] });
+    }
+    if (h < 36 && r() < 0.6) {
+      const rw = Math.min(span * 0.8, 15);
+      this._billboard({ id: `roof-${id}`, placementId: `world.central.roof-${id}`, x: cx, z: cz, y: h, w: rw, h: rw * 0.42, pole: 2.2, lookAt: [cx + nx * 60, cz + nz * 60] });
+    }
+  }
+
+  // Vertical banner ads on a free side wall of shops, halls and towers.
+  _placeBanners() {
+    const blocked = (x, z, own) => this.colliders.some((c) => c !== own && !c.low && x > c.x0 && x < c.x1 && z > c.z0 && z < c.z1);
+    for (const p of this.cfg.places) {
+      if (!['storefront', 'tower', 'hall', 'cinema'].includes(p.template) || p.h < 9) continue;
+      const own = this.colliders.find((c) => c.x0 === footprint(p).x0 && c.z0 === footprint(p).z0);
+      const th = FACING_ROT[p.facing];
+      for (const sx of [1, -1]) {
+        const lx = sx * (p.w / 2 + 0.25);
+        const wx = p.x + lx * Math.cos(th);
+        const wz = p.z - lx * Math.sin(th);
+        const ox = sx * Math.cos(th);
+        const oz = -sx * Math.sin(th);
+        if (blocked(wx + ox * 4, wz + oz * 4, own)) continue;
+        const bw = Math.min(p.d * 0.5, 5.5);
+        const bh = Math.min(p.h * 0.6, bw * 1.8);
+        this._billboard({ id: `banner-${p.id}`, placementId: `world.central.banner-${p.id}`, wall: true, x: wx, z: wz, y: Math.max(3.2, p.h * 0.32), w: bw, h: bh, pole: 0, lookAt: [wx + ox * 60, wz + oz * 60] });
+        break;
+      }
+    }
   }
 
   setBillboardCreative(id, creative) {
@@ -885,7 +956,8 @@ export class City {
     bb.creativeId = creative.id;
     bb.creative = creative;
     bb.face.material.map?.dispose();
-    bb.face.material.map = adTexture(creative);
+    const pw = bb.placement;
+    bb.face.material.map = pw.h > pw.w ? adTexture(creative, 512, 1024) : adTexture(creative);
     bb.face.material.color.set('#ffffff');
     bb.face.material.needsUpdate = true;
   }
@@ -922,6 +994,7 @@ export class City {
       cap.position.set(cx, 0.2, cz);
       this.root.add(body, cap);
       this.colliders.push({ x0: cx - w / 2, x1: cx + w / 2, z0: cz - d / 2, z1: cz + d / 2 });
+      this._buildingAds(`${i}${j}${k}`.replace(/-/g, 'm'), { cx, cz, w, d, h, alongX, side: (k + i + j) % 2 ? 1 : -1, r });
     }
   }
 
@@ -1009,6 +1082,8 @@ export class City {
       this.root.add(trunk, crown);
     }
     this.treeCount = trees.length;
+    for (const [x, z] of trees) this.obstacles.push([x, z, 0.4]);
+    for (const [x, z] of lamps) this.obstacles.push([x, z, 0.2]);
 
     const pole = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.08, 0.12, 5, 6), this.mats.metal, lamps.length);
     const headMat = new THREE.MeshStandardMaterial({ color: '#fff4d6', emissive: '#ffd27a', emissiveIntensity: 0 });
@@ -1069,6 +1144,7 @@ export class City {
       const a = time * 0.025;
       this.airship.position.set(Math.cos(a) * 150, 78 + Math.sin(time * 0.2) * 2, Math.sin(a) * 150 - 40);
       this.airship.rotation.y = -a;
+      if (this.airship.userData.logoMat) this.airship.userData.logoMat.emissiveIntensity = 0.12 + night * 1.4;
     }
     if (this.tower) {
       for (const m of this.tower.userData.mats) m.emissiveIntensity = night * 1.1;

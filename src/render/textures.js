@@ -123,6 +123,7 @@ export function adTexture(creative, w = 1024, h = 512) {
   g.fillStyle = '#fff';
   g.textAlign = 'left';
   g.textBaseline = 'alphabetic';
+  if (h > w) return portraitAd(c, g, creative, w, h);
   let size = 124;
   g.font = `900 ${size}px Inter, system-ui, sans-serif`;
   while (g.measureText(creative.headline).width > w * 0.86 && size > 40) {
@@ -150,6 +151,60 @@ export function adTexture(creative, w = 1024, h = 512) {
   g.fillStyle = 'rgba(255,255,255,0.8)';
   g.textAlign = 'right';
   g.fillText(`Sponsored · ${creative.advertiserName}`, w - 40, h - 34);
+  return tex(c);
+}
+
+// Tall banner layout: wrapped headline, wrapped sub line, CTA at the bottom.
+function wrap(g, text, maxW) {
+  const lines = [];
+  let line = '';
+  for (const word of String(text).split(/\s+/)) {
+    const t = line ? `${line} ${word}` : word;
+    if (g.measureText(t).width > maxW && line) {
+      lines.push(line);
+      line = word;
+    } else line = t;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function portraitAd(c, g, creative, w, h) {
+  const pad = 44;
+  let size = 112;
+  let lines;
+  do {
+    g.font = `900 ${size}px Inter, system-ui, sans-serif`;
+    lines = wrap(g, creative.headline, w - pad * 2);
+    size -= 6;
+  } while ((lines.length > 4 || lines.some((l) => g.measureText(l).width > w - pad * 2)) && size > 40);
+  g.shadowColor = 'rgba(0,0,0,0.25)';
+  g.shadowBlur = 18;
+  let y = h * 0.3;
+  for (const l of lines) {
+    g.fillText(l, pad, y);
+    y += size * 1.08;
+  }
+  g.shadowBlur = 0;
+  g.font = '600 40px Inter, system-ui, sans-serif';
+  g.globalAlpha = 0.92;
+  y += 30;
+  for (const l of wrap(g, creative.sub, w - pad * 2).slice(0, 4)) {
+    g.fillText(l, pad, y);
+    y += 50;
+  }
+  g.globalAlpha = 1;
+  g.font = '800 36px Inter, system-ui, sans-serif';
+  const cta = `${creative.cta}  →`;
+  const cw = Math.min(w - pad * 2, g.measureText(cta).width + 60);
+  g.fillStyle = '#ffffff';
+  roundRect(g, pad, h * 0.8, cw, 80, 40);
+  g.fill();
+  g.fillStyle = creative.bg?.[1] || '#111';
+  g.fillText(cta, pad + 30, h * 0.8 + 52);
+  g.font = '700 24px Inter, system-ui, sans-serif';
+  g.fillStyle = 'rgba(255,255,255,0.8)';
+  g.fillText(`Sponsored · ${creative.advertiserName}`, pad, h - 34);
   return tex(c);
 }
 

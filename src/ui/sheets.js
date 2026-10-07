@@ -874,7 +874,7 @@ VIEWS['post-gig'] = {
 VIEWS.billboard = {
   title: 'Sponsored',
   async render(app, props) {
-    const b = BILLBOARDS.find((x) => x.id === props.id);
+    const b = app.city.adSlots.find((x) => x.id === props.id) || BILLBOARDS.find((x) => x.id === props.id);
     const c = await app.api.ads.getCreative(b.placementId);
     props._c = c;
     const stats = await app.api.ads.getStats(c.id);

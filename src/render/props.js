@@ -239,6 +239,44 @@ export function createAirship() {
   gondola.position.y = -4.3;
   g.add(body, gondola);
   g.traverse((o) => o.isMesh && (o.castShadow = true));
+  // PLUDOR livery on both flanks: a decal bent to hug the hull, glowing at night.
+  const [lc, lx] = canvas(1024, 192);
+  const grad = lx.createLinearGradient(0, 0, 160, 160);
+  grad.addColorStop(0, '#7c5cff');
+  grad.addColorStop(1, '#22d3ee');
+  lx.fillStyle = grad;
+  lx.beginPath();
+  if (lx.roundRect) lx.roundRect(40, 16, 160, 160, 36);
+  else lx.rect(40, 16, 160, 160);
+  lx.fill();
+  lx.fillStyle = '#ffffff';
+  lx.font = '900 120px Inter, system-ui, sans-serif';
+  lx.textAlign = 'center';
+  lx.textBaseline = 'middle';
+  lx.fillText('P', 120, 100);
+  lx.fillStyle = '#16245e';
+  lx.textAlign = 'left';
+  lx.font = '900 132px Inter, system-ui, sans-serif';
+  lx.fillText('PLUDOR', 236, 104);
+  const logo = new THREE.CanvasTexture(lc);
+  logo.colorSpace = THREE.SRGBColorSpace;
+  logo.anisotropy = 8;
+  const decalMat = new THREE.MeshStandardMaterial({ map: logo, transparent: true, roughness: 0.4, emissive: '#ffffff', emissiveMap: logo, emissiveIntensity: 0.15, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+  g.userData.logoMat = decalMat;
+  for (const side of [1, -1]) {
+    const geo = new THREE.PlaneGeometry(20, 3.75, 40, 8);
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const u = pos.getX(i); // along the hull
+      const v = pos.getY(i) + 0.4;
+      const r = 1 - (u / 16) ** 2 - (v / 4.2) ** 2;
+      const x = 4.2 * Math.sqrt(Math.max(0.0001, r)) + 0.04;
+      pos.setXYZ(i, side * x, v, -side * u);
+    }
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, decalMat);
+    g.add(m);
+  }
   return g;
 }
 

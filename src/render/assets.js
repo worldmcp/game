@@ -2,18 +2,45 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { MODELS } from '../config/assets.js';
 
 const loader = new GLTFLoader();
-loader.setMeshoptDecoder(MeshoptDecoder);
+// meshopt needs WebAssembly; web bundles ship decoded models and skip it.
+const decoderReady = globalThis.PLUDOR_SAFE_TEXTURES
+  ? Promise.resolve()
+  : import('three/addons/libs/meshopt_decoder.module.js').then((m) => loader.setMeshoptDecoder(m.MeshoptDecoder)).catch(() => {});
+// Locked-down hosts (strict CSP) may refuse fetch() of blob: URLs, which the
+// default ImageBitmapLoader uses for embedded textures. <img> works there.
+if (globalThis.PLUDOR_SAFE_TEXTURES) {
+  loader.register((parser) => {
+    parser.textureLoader = new THREE.TextureLoader(parser.options.manager);
+    return { name: 'pludor_safe_textures' };
+  });
+}
 const cache = new Map();
+export const assetErrors = [];
+
+// Web bundles ship each .glb as base64 text (served everywhere as text/plain).
+async function fetchModel(url) {
+  await decoderReady;
+  if (!url.endsWith('.b64.txt')) return loader.loadAsync(url);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status} ${url}`);
+  const bin = atob((await res.text()).trim());
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return loader.parseAsync(bytes.buffer, url.slice(0, url.lastIndexOf('/') + 1));
+}
 
 export function loadModel(name) {
   if (!MODELS[name]) return Promise.reject(new Error(`Unknown model ${name}`));
   if (!cache.has(name)) {
-    cache.set(name, loader.loadAsync(MODELS[name].url).then((gltf) => {
+    cache.set(name, fetchModel(MODELS[name].url).catch((e) => {
+      assetErrors.push(`${name}: ${e?.message || e}`);
+      cache.delete(name);
+      throw e;
+    }).then((gltf) => {
       gltf.scene.traverse((o) => {
         if (o.isMesh) {
           o.castShadow = true;
