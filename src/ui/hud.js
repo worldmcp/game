@@ -35,6 +35,7 @@ export class Hud {
     <header class="pw-top">
       <div class="pw-brand"><span class="pw-logo">P</span><span class="pw-brand-text"><b>PLUDOR</b> WORLD</span></div>
       <label class="pw-search"><span>🔍</span><input type="search" placeholder="Search places, people, gigs… or ask AI" aria-label="Search"></label>
+      <div class="pw-chip pw-online" title="Players online now"><i></i><b class="pw-online-n">1</b> online</div>
       <div class="pw-chip pw-clock" title="World time"><span class="pw-clock-icon">☀️</span><b class="pw-clock-t">--</b></div>
       <button class="pw-chip pw-wallet" data-sheet="wallet" title="Pludor Wallet"><span>💳</span><b class="pw-bal">--</b></button>
       <button class="pw-chip pw-level" data-sheet="profile" title="Level & XP"><span class="pw-lvl">1</span><span class="pw-xpbar"><i></i></span></button>
@@ -178,7 +179,7 @@ export class Hud {
     if (sig === this._nearSig) return;
     this._nearSig = sig;
     ul.innerHTML = list.length
-      ? list.slice(0, 5).map((p) => html`<li data-hud="open" data-arg='${esc(JSON.stringify({ type: 'player', id: p.id }))}'><span class="pw-av sm" style="background:${p.color}">${p.displayName[0]}</span><div><b>@${p.name}</b><small><span class="pw-dot" style="background:${PRESENCE_COLORS[p.presence] || '#36d399'}"></span>${p.presence}</small></div><em>${Math.round(p.dist)}m</em></li>`.s).join('')
+      ? list.slice(0, 5).map((p) => html`<li data-hud="open" data-arg='${esc(JSON.stringify({ type: 'player', id: p.id }))}'><span class="pw-av sm" style="background:${p.color}">${(p.displayName || "?")[0]}</span><div><b>@${p.name}</b><small><span class="pw-dot" style="background:${PRESENCE_COLORS[p.presence] || '#36d399'}"></span>${p.presence}</small></div><em>${Math.round(p.dist)}m</em></li>`.s).join('')
       : '<li class="pw-muted">No one nearby. Head to the plaza to meet people.</li>';
   }
 
@@ -320,6 +321,12 @@ export class Hud {
   // Server-confirmed progress → celebratory feedback.
   showProgress(r) {
     if (!r) return;
+    // The same award can arrive as an RPC result and as a pushed event.
+    const sig = JSON.stringify([r.event, r.xp, (r.achievements || []).map((a) => a.id), (r.questsCompleted || []).map((q) => q.id), r.levelUp]);
+    const now = Date.now();
+    this._seen = (this._seen || []).filter((s) => now - s.at < 2500);
+    if (this._seen.some((s) => s.sig === sig)) return;
+    this._seen.push({ sig, at: now });
     if (r.xp > 0) this._floatXp(r.xp);
     for (const a of r.achievements || []) this.banner(`${a.icon} Achievement unlocked`, a.title);
     for (const q of r.questsCompleted || []) this.banner('⭐ Quest complete', `${q.title} · +${q.rewardXp} XP`);
@@ -545,6 +552,9 @@ export class Hud {
       this.q('.pw-clock-t').textContent = `${formatClock(wt)} · Day ${wt.day}`;
       this.q('.pw-clock-icon').textContent = { dawn: '🌅', day: '☀️', dusk: '🌇', night: '🌙' }[wt.phase];
       this.app.sheets.tick?.();
+      const tr = this.app.transport;
+      const n = tr?.online || (tr ? tr.peers().length + 1 : 1);
+      this.q('.pw-online-n').textContent = n.toLocaleString();
     }
     this._plates();
   }

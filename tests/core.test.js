@@ -141,3 +141,10 @@ test('AI intent routing understands spatial requests', () => {
   const order = route('Order this', { ...ctx, places: places.map((p) => ({ ...p, commerce: p.kind === 'cafe' })) });
   assert.equal(order.autorun.type, 'open', 'AI opens checkout UI, never pays');
 });
+
+test('nav grid returns a walkable path even when start and goal share a cell', () => {
+  const g = new NavGrid({ half: 20, cell: 2, blockers: [] });
+  const p = g.find({ x: 1.1, z: 1.1 }, { x: 1.4, z: 1.3 });
+  assert.ok(p.length >= 2);
+  assert.deepEqual(p.at(-1), { x: 1.4, z: 1.3 });
+});

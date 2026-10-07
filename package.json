@@ -2,11 +2,18 @@
   "name": "pludor-world",
   "version": "0.2.0",
   "private": true,
-  "description": "Pludor World — spatial, multiplayer interface to the Pludor platform.",
+  "description": "Pludor World \u2014 spatial, multiplayer interface to the Pludor platform.",
   "type": "module",
   "scripts": {
+    "start": "node server/server.js",
     "test": "node --test tests/*.test.js",
-    "serve": "python3 -m http.server 8080"
+    "serve:static": "python3 -m http.server 8080"
   },
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "dependencies": {
+    "ws": "^8.22.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
 }

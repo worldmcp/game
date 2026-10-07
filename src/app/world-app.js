@@ -25,7 +25,9 @@ const BOT_ANCHORS = {
 };
 
 export class WorldApp {
-  constructor(root, { api, transport, flags, me }) {
+  constructor(root, { api, transport, flags, me, spawn = null, mode = 'embedded' }) {
+    this.spawn = spawn;
+    this.mode = mode;
     this.root = root;
     this.api = api;
     this.transport = transport;
@@ -135,8 +137,11 @@ export class WorldApp {
   _initPlayer() {
     const p = this.me;
     this.player = createAvatar({ color: p.color, skin: p.skin, seed: [...p.id].reduce((a, c) => a + c.charCodeAt(0), 0), ring: p.color, quality: this.quality, person: p.avatar || pickPerson([...p.id].reduce((a, c) => a + c.charCodeAt(0), 0)) });
-    this.player.position.set(DISTRICT.spawn.x, 0.2, DISTRICT.spawn.z);
-    this.player.rotation.y = Math.PI; // face north, towards the plaza and Pludor Tower
+    // Resume where the server last saw this player, else the district spawn.
+    const sp = this.spawn || DISTRICT.spawn;
+    this.player.position.set(sp.x, 0.2, sp.z);
+    this.player.rotation.y = this.spawn?.ry ?? Math.PI; // face north, towards the plaza and Pludor Tower
+    this.cam.yaw = this.player.rotation.y - Math.PI;
     this.scene.add(this.player);
     this.vel = new THREE.Vector2();
     this.speed = 0;
@@ -404,6 +409,11 @@ export class WorldApp {
     });
     if (!this.transport) return;
     this.transport.onPeers(() => this._syncPeers());
+    // Server-authoritative movement: snap back when the hub rejects a move.
+    this.transport.onCorrection?.((pos) => {
+      this.player.position.set(pos.x, 0.2, pos.z);
+      this.cancelNav();
+    });
     setInterval(() => this._syncPeers(), 1500);
     this.transport.hello();
     setInterval(() => this._publish(), 100);
@@ -697,6 +707,10 @@ export class WorldApp {
       dz = fwd.y * iz + right.y * ix;
     } else if (this.nav) {
       const wp = this.nav.path[this.nav.i];
+      if (!wp) {
+        this.cancelNav();
+        return this._movePlayer(dt, t);
+      }
       const vx = wp.x - pos.x;
       const vz = wp.z - pos.z;
       const d = Math.hypot(vx, vz);
@@ -790,6 +804,10 @@ export class WorldApp {
         }
       } else {
         const wp = b.path.pts[b.path.i];
+        if (!wp) {
+          b.path = null;
+          continue;
+        }
         const dx = wp.x - pos.x;
         const dz = wp.z - pos.z;
         const d = Math.hypot(dx, dz);

@@ -89,7 +89,10 @@ export class NavGrid {
     cells.reverse();
     const pts = cells.map((c) => this.toWorld(c % n, Math.floor(c / n)));
     pts[pts.length - 1] = { x: goal.x, z: goal.z };
-    return this.smooth([{ x: start.x, z: start.z }, ...pts.slice(1)]);
+    const path = this.smooth([{ x: start.x, z: start.z }, ...pts.slice(1)]);
+    // Same-cell start/goal still yields a walkable two-point path.
+    if (path.length < 2) path.push({ x: goal.x, z: goal.z });
+    return path;
   }
 
   smooth(pts) {

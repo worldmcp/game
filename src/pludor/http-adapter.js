@@ -82,8 +82,13 @@ export const ENDPOINTS = {
 export class HttpPludorAdapter {
   // apiBase: e.g. 'https://pludor.com/api'; getToken: () => bearer token from
   // the host app's existing session (World never handles credentials itself).
-  constructor({ apiBase, getToken, endpoints = ENDPOINTS, fetchImpl = (...a) => fetch(...a), onLink }) {
+  // rpc: true → every contract method is POST {apiBase}/rpc/<ns.method>
+  // ({ args }) — the protocol of the World sandbox server (server/server.js),
+  // and the simplest shape for a Pludor gateway to implement.
+  constructor({ apiBase, getToken, endpoints = ENDPOINTS, fetchImpl = (...a) => fetch(...a), onLink, rpc = false, onUnauthorized }) {
     this.apiBase = apiBase.replace(/\/$/, '');
+    this.rpc = rpc;
+    this.onUnauthorized = onUnauthorized;
     this.getToken = getToken;
     this.endpoints = endpoints;
     this.fetch = fetchImpl;
@@ -107,6 +112,7 @@ export class HttpPludorAdapter {
   }
 
   async _call(name, args) {
+    if (this.rpc) return this._rpc(name, args);
     const ep = this.endpoints[name];
     if (!ep) throw new PludorError('not_wired', `${name} is not wired to a Pludor endpoint yet (see src/pludor/http-adapter.js).`);
     const [method, pathTpl, toRequest] = ep;
@@ -121,11 +127,45 @@ export class HttpPludorAdapter {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new PludorError(data?.code || `http_${res.status}`, data?.message || `Request failed (${res.status}).`);
+    this._after(name, data);
+    return data;
+  }
+
+  // Mutating calls carry an idempotency key; one automatic retry on network
+  // failure reuses it so a flaky connection can never double-charge.
+  async _rpc(name, args) {
+    const key = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+    const doFetch = async () => {
+      const token = await this.getToken?.();
+      return this.fetch(`${this.apiBase}/rpc/${name}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'idempotency-key': key, ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ args }),
+      });
+    };
+    let res;
+    try {
+      res = await doFetch();
+    } catch {
+      await new Promise((r) => setTimeout(r, 600));
+      try {
+        res = await doFetch();
+      } catch {
+        throw new PludorError('offline', 'Connection lost — check your network and try again.');
+      }
+    }
+    const body = await res.json().catch(() => null);
+    if (res.status === 401) this.onUnauthorized?.();
+    if (!res.ok || !body?.ok) throw new PludorError(body?.code || `http_${res.status}`, body?.message || `Request failed (${res.status}).`);
+    // Progress, links and notifications arrive as server-pushed events.
+    return body.data;
+  }
+
+  _after(name, data) {
     if (name === 'links.open') this.onLink?.(data);
     if (/^(commerce\.(checkout|book|buyListing)|work\.|land\.|learning\.completeCourse|games\.submitGame|events\.|world\.(collectToken|joinCommunity))/.test(name)) {
       if (data?.progress) this.emit({ kind: 'progress', ...data.progress });
       this.emit({ kind: 'state' });
     }
-    return data;
   }
 }

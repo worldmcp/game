@@ -20,7 +20,7 @@ export { resolveFlags, DEFAULT_FLAGS } from './config/flags.js';
 export { CONTRACT, CLIENT_REPORTABLE_EVENTS } from './pludor/contract.js';
 export { EV as WORLD_EVENTS } from './core/events.js';
 
-export async function mountPludorWorld(el, { adapter, transport = null, me, flags = DEFAULT_FLAGS } = {}) {
+export async function mountPludorWorld(el, { adapter, transport = null, me, flags = DEFAULT_FLAGS, spawn = null, mode = 'embedded' } = {}) {
   assertAdapter(adapter);
   if (!flags.WORLD_ENABLED) {
     el.innerHTML = '<div class="pw-root"><div class="pw-loading"><div class="pw-loading-box"><h1>PLUDOR <span>WORLD</span></h1><small>World is not available right now.</small></div></div></div>';
@@ -31,7 +31,7 @@ export async function mountPludorWorld(el, { adapter, transport = null, me, flag
   const root = el.querySelector('.pw-root');
   const bar = root.querySelector('.pw-loading-bar i');
   const msg = root.querySelector('.pw-loading-msg');
-  const app = new WorldApp(root, { api: adapter, transport, flags, me });
+  const app = new WorldApp(root, { api: adapter, transport, flags, me, spawn, mode });
   await app.start((p, text) => {
     bar.style.width = `${Math.round(p * 100)}%`;
     msg.textContent = text;

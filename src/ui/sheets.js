@@ -892,7 +892,7 @@ VIEWS.player = {
     const res = RESIDENTS.find((r) => r.id === props.id);
     const place = res?.owns ? PLACES.find((p) => p.link.id === res.owns) : null;
     const theirGigs = app.state.gigs.filter((g) => g.requesterId === props.id && g.application?.status !== 'completed');
-    return html`<div class="pw-profile-hero" style="--c:${u.color}"><span class="pw-av xl" style="background:${u.color}">${u.displayName[0]}</span><div><h3>${u.displayName}</h3><small>@${u.handle} · <span class="pw-dot" style="background:${PRESENCE_COLORS[u.presence] || '#6b7280'}"></span>${u.presence}</small>
+    return html`<div class="pw-profile-hero" style="--c:${u.color}"><span class="pw-av xl" style="background:${u.color}">${(u.displayName || '?')[0]}</span><div><h3>${u.displayName}</h3><small>@${u.handle} · <span class="pw-dot" style="background:${PRESENCE_COLORS[u.presence] || '#6b7280'}"></span>${u.presence}</small>
       <div class="pw-chips">${(u.roles || []).map((r) => html`<span class="pw-tag">${r}</span>`)}${rel.friend ? html`<span class="pw-tag ok">Friend</span>` : ''}</div></div></div>
       ${u.bio ? html`<p class="pw-blurb">${u.bio}</p>` : ''}
       <div class="pw-grid3">
@@ -1352,9 +1352,11 @@ VIEWS.profile = {
       <div class="pw-badges">${Object.entries(ECONOMY.achievements).map(([id, a]) => html`<div class="pw-badge-tile ${pr.achievements.some((x) => x.id === id) ? 'on' : ''}" title="${a.title}"><span>${a.icon}</span><small>${a.title}</small></div>`)}</div>
       ${skillsList(app)}
       <h4>Rank ladder</h4><ol class="pw-ladder">${ECONOMY.ranks.map((r) => html`<li class="${r.id === pr.rank.id ? 'cur' : ''}">${r.title}</li>`)}</ol>
+      ${app.logout ? html`<div class="pw-row">${btn('Sign out', 'logout', null, 'ghost sm danger')}</div>` : ''}
       ${pr.coupons.length ? html`<h4>Coupons</h4><div class="pw-chips">${pr.coupons.map((c) => html`<span class="pw-tag ok">🎟️ ${c.code} · ${c.percentOff}% off</span>`)}</div>` : ''}`;
   },
   actions: {
+    logout: (app) => app.logout?.(),
     async color(app, props, c, s) {
       await app.api.identity.updateProfile({ color: c });
       app.recolorPlayer?.(c);
